@@ -151,9 +151,20 @@
       transition: border-color 0.2s;
     }
     .install-line:hover { border-color: rgba(255,255,255,0.12); }
+    .install-line[data-copy] { cursor: pointer; position: relative; }
     .install-line .p { color: var(--sage); flex-shrink: 0; }
     .install-line .cmd { color: var(--text); font-weight: 700; }
     .install-line .flag { color: var(--azure); }
+    .copy-hint {
+      font-family: var(--sans);
+      font-size: 0.62rem;
+      color: var(--text-muted);
+      margin-left: auto;
+      flex-shrink: 0;
+      transition: color 0.2s;
+    }
+    .install-line:hover .copy-hint { color: var(--text-dim); }
+    .copy-hint.copied { color: var(--sage); }
     .install-hint {
       font-family: var(--sans);
       font-size: 0.72rem;
@@ -269,15 +280,17 @@
       <button class="install-tab" data-target="win">Windows</button>
     </div>
     <div class="install-pane active" id="unix">
-      <div class="install-line">
+      <div class="install-line" data-copy="curl -fsSL https://raw.githubusercontent.com/burkeholland/cpt/main/install.sh | sh">
         <span class="p">$</span>
         <span><span class="cmd">curl -fsSL</span> https://raw.githubusercontent.com/burkeholland/cpt/main/install.sh <span class="cmd">| sh</span></span>
+        <span class="copy-hint">click to copy</span>
       </div>
     </div>
     <div class="install-pane" id="win">
-      <div class="install-line">
+      <div class="install-line" data-copy="irm https://raw.githubusercontent.com/burkeholland/cpt/main/install.ps1 | iex">
         <span class="p">></span>
         <span><span class="cmd">irm</span> https://raw.githubusercontent.com/burkeholland/cpt/main/install.ps1 <span class="cmd">| iex</span></span>
+        <span class="copy-hint">click to copy</span>
       </div>
     </div>
     <span class="install-hint">zsh · bash · fish · PowerShell</span>
@@ -324,6 +337,21 @@ document.querySelectorAll('.install-tab').forEach(tab => {
     document.querySelectorAll('.install-pane').forEach(p => p.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById(tab.dataset.target).classList.add('active');
+  });
+});
+
+document.querySelectorAll('.install-line[data-copy]').forEach(line => {
+  line.addEventListener('click', () => {
+    const text = line.dataset.copy;
+    navigator.clipboard.writeText(text).then(() => {
+      const hint = line.querySelector('.copy-hint');
+      hint.textContent = 'copied!';
+      hint.classList.add('copied');
+      setTimeout(() => {
+        hint.textContent = 'click to copy';
+        hint.classList.remove('copied');
+      }, 2000);
+    });
   });
 });
 </script>
