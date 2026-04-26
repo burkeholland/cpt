@@ -13,7 +13,11 @@ detect_platform() {
   case "$OS" in
     darwin)  OS="darwin" ;;
     linux)   OS="linux" ;;
-    mingw*|msys*|cygwin*) OS="windows" ;;
+    mingw*|msys*|cygwin*)
+      echo "On Windows, use PowerShell instead:" >&2
+      echo "  irm https://raw.githubusercontent.com/burkeholland/cpt/main/install.ps1 | iex" >&2
+      exit 1
+      ;;
     *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
   esac
 
@@ -76,7 +80,11 @@ case ":$PATH:" in
 esac
 
 # Register the shell widget (Ctrl+K keybinding)
-"${INSTALL_DIR}/cpt" --install
-
-echo ""
-echo "Restart your terminal (or source your shell rc) to activate Ctrl+K."
+if "${INSTALL_DIR}/cpt" --install 2>&1; then
+  echo ""
+  echo "Restart your terminal (or source your shell rc) to activate Ctrl+K."
+else
+  echo ""
+  echo "Binary installed, but shell widget setup failed."
+  echo "Run manually: cpt --install"
+fi

@@ -48,7 +48,12 @@ if ($userPath -notlike "*$installDir*") {
 }
 
 # Register the shell widget (Ctrl+K keybinding)
-& (Join-Path $installDir "cpt.exe") --install
-
-Write-Host ""
-Write-Host "Restart your terminal to activate Ctrl+K." -ForegroundColor Cyan
+try {
+    & (Join-Path $installDir "cpt.exe") --install
+    Write-Host ""
+    Write-Host "Restart your terminal to activate Ctrl+K." -ForegroundColor Cyan
+} catch {
+    Write-Host ""
+    Write-Host "Binary installed, but shell widget setup failed." -ForegroundColor Yellow
+    Write-Host "Run manually: cpt --install" -ForegroundColor Yellow
+}
