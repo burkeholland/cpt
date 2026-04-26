@@ -43,14 +43,25 @@ func main() {
 	if err != nil {
 		ttyOut = os.Stderr // fallback
 	}
-	p := tea.NewProgram(m, tea.WithOutput(ttyOut), tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithOutput(ttyOut))
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Clear the inline TUI from the terminal so it disappears on dismiss
 	fm := finalModel.(model)
+	lastView := fm.View()
+	lineCount := strings.Count(lastView, "\n")
+	if lineCount > 0 {
+		// Move cursor up and clear each line the TUI occupied
+		for i := 0; i < lineCount; i++ {
+			fmt.Fprintf(ttyOut, "\033[A\033[2K")
+		}
+		fmt.Fprintf(ttyOut, "\r")
+	}
+
 	switch fm.exitAction {
 	case actionInsert:
 		// Print to stdout — the shell widget captures this via $(cpt)
