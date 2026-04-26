@@ -106,8 +106,35 @@
     /* ── INSTALL ── */
     .install-block {
       display: flex;
+      flex-direction: column;
       gap: 0.5rem;
-      flex-wrap: wrap;
+    }
+    .install-tabs {
+      display: flex;
+      gap: 0;
+    }
+    .install-tab {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-bottom: none;
+      padding: 0.35rem 0.75rem;
+      cursor: pointer;
+      transition: color 0.2s, background 0.2s;
+      border-radius: 6px 6px 0 0;
+    }
+    .install-tab.active {
+      color: var(--text-dim);
+      background: var(--surface);
+      border-color: var(--border);
+    }
+    .install-tab:not(.active):hover { color: var(--text-dim); }
+    .install-pane { display: none; }
+    .install-pane.active { display: block; }
+    .install-pane .install-line {
+      border-radius: 0 6px 6px 6px;
     }
     .install-line {
       font-family: var(--mono);
@@ -237,15 +264,27 @@
   </div>
 
   <div class="install-block">
-    <div class="install-line">
-      <span class="p">$</span>
-      <span><span class="cmd">curl -fsSL</span> https://raw.githubusercontent.com/burkeholland/cpt/main/install.sh <span class="cmd">| sh</span></span>
+    <div class="install-tabs">
+      <button class="install-tab active" data-target="unix">macOS / Linux</button>
+      <button class="install-tab" data-target="win">Windows</button>
+    </div>
+    <div class="install-pane active" id="unix">
+      <div class="install-line">
+        <span class="p">$</span>
+        <span><span class="cmd">curl -fsSL</span> https://raw.githubusercontent.com/burkeholland/cpt/main/install.sh <span class="cmd">| sh</span></span>
+      </div>
+    </div>
+    <div class="install-pane" id="win">
+      <div class="install-line">
+        <span class="p">></span>
+        <span><span class="cmd">irm</span> https://raw.githubusercontent.com/burkeholland/cpt/main/install.ps1 <span class="cmd">| iex</span></span>
+      </div>
     </div>
     <div class="install-line">
       <span class="p">$</span>
       <span><span class="cmd">cpt</span> <span class="flag">--install</span></span>
     </div>
-    <span class="install-hint">macOS · Linux · Windows (WSL) · zsh · bash · fish · PowerShell</span>
+    <span class="install-hint">zsh · bash · fish · PowerShell</span>
   </div>
 
   <div class="terminal">
@@ -282,5 +321,15 @@
 
 </div>
 
+<script>
+document.querySelectorAll('.install-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.install-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.install-pane').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.target).classList.add('active');
+  });
+});
+</script>
 </body>
 </html>
