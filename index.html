@@ -303,7 +303,9 @@
       <span class="term-title">~/projects/webapp</span>
     </div>
     <div class="term-body">
-      <div><span class="t-path">~/projects/webapp</span> <span class="t-chev">❯</span> <span class="t-cmd">ctrl+k</span></div>
+      <div><span class="t-path">~/projects/webapp</span> <span class="t-chev">❯</span> <span class="t-cmd">npm start</span></div>
+      <div style="color: var(--text-dim)">Error: listen EADDRINUSE: address already in use :::3000</div>
+      <div style="margin-top: 0.3rem"><span class="t-path">~/projects/webapp</span> <span class="t-chev">❯</span> <span class="t-cmd" style="color: var(--text-muted)">ctrl+k</span></div>
 
       <div class="cpt-box">
         <div class="cpt-h">
@@ -312,15 +314,15 @@
           <span class="cpt-model">gpt-4.1</span>
           <span class="cpt-tab">tab↹ model</span>
         </div>
-        <div class="cpt-q">find all node_modules and delete them</div>
+        <div class="cpt-q">what's using port 3000? kill it</div>
         <div class="cpt-r">
-          <span class="cpt-arrow">▸</span> <span class="cpt-cmd">find . -name "node_modules" -type d -prune -exec rm -rf {} +</span>
+          <span class="cpt-arrow">▸</span> <span class="cpt-cmd">lsof -ti :3000 | xargs kill -9</span>
         </div>
         <div class="cpt-refine">Refine your request... <span class="cpt-cursor"></span></div>
         <div class="cpt-help">enter accept · type to refine · esc quit</div>
       </div>
 
-      <div><span class="t-path">~/projects/webapp</span> <span class="t-chev">❯</span> <span class="t-cmd">find . -name "node_modules" -type d -prune -exec rm -rf {} +</span></div>
+      <div><span class="t-path">~/projects/webapp</span> <span class="t-chev">❯</span> <span class="t-cmd">lsof -ti :3000 | xargs kill -9</span></div>
     </div>
   </div>
 
