@@ -153,6 +153,7 @@
     .install-line:hover { border-color: rgba(255,255,255,0.12); }
     .install-line[data-copy] { cursor: pointer; position: relative; }
     .install-line .p { color: var(--sage); flex-shrink: 0; }
+    .install-line .cmd-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .install-line .cmd { color: var(--text); font-weight: 700; }
     .install-line .flag { color: var(--azure); }
     .copy-hint {
@@ -282,14 +283,14 @@
     <div class="install-pane active" id="unix">
       <div class="install-line" data-copy="curl -fsSL https://raw.githubusercontent.com/burkeholland/cpt/main/install.sh | sh">
         <span class="p">$</span>
-        <span><span class="cmd">curl -fsSL</span> https://raw.githubusercontent.com/burkeholland/cpt/main/install.sh <span class="cmd">| sh</span></span>
+        <span class="cmd-text"><span class="cmd">curl -fsSL</span> https://raw.githubusercontent.com/burkeholland/cpt/main/install.sh <span class="cmd">| sh</span></span>
         <span class="copy-hint">click to copy</span>
       </div>
     </div>
     <div class="install-pane" id="win">
       <div class="install-line" data-copy="irm https://raw.githubusercontent.com/burkeholland/cpt/main/install.ps1 | iex">
         <span class="p">></span>
-        <span><span class="cmd">irm</span> https://raw.githubusercontent.com/burkeholland/cpt/main/install.ps1 <span class="cmd">| iex</span></span>
+        <span class="cmd-text"><span class="cmd">irm</span> https://raw.githubusercontent.com/burkeholland/cpt/main/install.ps1 <span class="cmd">| iex</span></span>
         <span class="copy-hint">click to copy</span>
       </div>
     </div>
