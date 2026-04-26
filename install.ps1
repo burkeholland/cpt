@@ -6,10 +6,15 @@ $repo = "burkeholland/cpt"
 $installDir = if ($env:CPT_INSTALL_DIR) { $env:CPT_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "cpt" }
 
 # Detect architecture
-$arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+$detectedArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+if (-not $detectedArch) {
+    $detectedArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+}
+$arch = switch ($detectedArch.ToUpperInvariant()) {
+    'AMD64' { 'amd64' }
     'X64'   { 'amd64' }
-    'Arm64' { 'arm64' }
-    default { throw "Unsupported architecture: $_" }
+    'ARM64' { 'arm64' }
+    default { throw "Unsupported architecture: $detectedArch" }
 }
 
 # Get latest version
