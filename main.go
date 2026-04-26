@@ -11,7 +11,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+var version = "dev"
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Println("cpt " + version)
+		return
+	}
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--setup":
