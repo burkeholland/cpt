@@ -47,4 +47,8 @@ if ($userPath -notlike "*$installDir*") {
     Write-Host ""
 }
 
-Write-Host "Then run: cpt --install"
+# Register the shell widget (Ctrl+K keybinding)
+& (Join-Path $installDir "cpt.exe") --install
+
+Write-Host ""
+Write-Host "Restart your terminal to activate Ctrl+K." -ForegroundColor Cyan

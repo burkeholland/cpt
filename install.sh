@@ -69,10 +69,14 @@ echo ""
 case ":$PATH:" in
   *":${INSTALL_DIR}:"*) ;;
   *)
-    echo "Add ${INSTALL_DIR} to your PATH:"
-    echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+    export PATH="${INSTALL_DIR}:$PATH"
+    echo "Added ${INSTALL_DIR} to your PATH for this session."
     echo ""
     ;;
 esac
 
-echo "Then run: cpt --install"
+# Register the shell widget (Ctrl+K keybinding)
+"${INSTALL_DIR}/cpt" --install
+
+echo ""
+echo "Restart your terminal (or source your shell rc) to activate Ctrl+K."
