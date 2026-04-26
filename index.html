@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cpt — your terminal copilot</title>
+  <meta name="description" content="cpt translates what you're thinking into the command you need. One keystroke, any shell.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --coral: #ff7f50;
+      --azure: #0ea5e9;
+      --sage: #84cc16;
+      --bg: #0b0f14;
+      --surface: #111820;
+      --surface-2: #161d27;
+      --border: rgba(255,255,255,0.06);
+      --text: #e2e8f0;
+      --text-dim: #64748b;
+      --text-muted: #334155;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Outfit', -apple-system, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    ::selection { background: var(--coral); color: #fff; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* ── GRAIN OVERLAY ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      pointer-events: none;
+      opacity: 0.025;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      background-size: 256px;
+    }
+
+    /* ── AMBIENT GLOW ── */
+    .glow {
+      position: fixed;
+      width: 600px;
+      height: 600px;
+      border-radius: 50%;
+      filter: blur(180px);
+      opacity: 0.07;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .glow-coral {
+      background: var(--coral);
+      top: -200px;
+      right: -100px;
+    }
+    .glow-azure {
+      background: var(--azure);
+      bottom: 30%;
+      left: -200px;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed;
+      top: 0;
+      width: 100%;
+      z-index: 100;
+      padding: 1.25rem 2.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(11,15,20,0.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+    .wordmark {
+      font-family: var(--mono);
+      font-size: 1.1rem;
+      font-weight: 800;
+      color: var(--text);
+      text-decoration: none;
+      letter-spacing: -0.04em;
+    }
+    .wordmark span { color: var(--coral); }
+    .nav-links {
+      display: flex;
+      gap: 2rem;
+      list-style: none;
+    }
+    .nav-links a {
+      font-family: var(--sans);
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+
+    /* ── HERO ── */
+    .hero {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 1fr 1.15fr;
+      align-items: center;
+      gap: 5rem;
+      padding: 8rem 2.5rem 4rem;
+      max-width: 1300px;
+      margin: 0 auto;
+    }
+
+    .hero-left h1 {
+      font-family: var(--mono);
+      font-size: clamp(4rem, 10vw, 8rem);
+      font-weight: 800;
+      line-height: 0.88;
+      letter-spacing: -0.06em;
+      color: var(--text);
+    }
+    .hero-left h1 .accent {
+      background: linear-gradient(135deg, var(--coral), var(--azure));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero-tagline {
+      font-family: var(--sans);
+      font-size: clamp(1.05rem, 1.6vw, 1.3rem);
+      color: var(--text-dim);
+      margin-top: 2rem;
+      max-width: 38ch;
+      line-height: 1.7;
+      font-weight: 400;
+    }
+    .hero-tagline strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .hero-badges {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 2.5rem;
+      flex-wrap: wrap;
+    }
+    .badge {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      font-weight: 500;
+      padding: 0.4rem 0.9rem;
+      border-radius: 100px;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      letter-spacing: 0.02em;
+    }
+    .badge .dot {
+      display: inline-block;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      margin-right: 0.4rem;
+      vertical-align: middle;
+    }
+    .dot-coral { background: var(--coral); }
+    .dot-azure { background: var(--azure); }
+    .dot-sage { background: var(--sage); }
+
+    /* ── TERMINAL MOCK ── */
+    .terminal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.03),
+        0 40px 100px -20px rgba(0,0,0,0.5);
+      width: 100%;
+    }
+    .term-bar {
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,0.015);
+    }
+    .term-dots {
+      display: flex;
+      gap: 6px;
+    }
+    .term-dots span {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+    .term-dots span:nth-child(1) { background: #ef4444; }
+    .term-dots span:nth-child(2) { background: #f59e0b; }
+    .term-dots span:nth-child(3) { background: #22c55e; }
+    .term-title {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      flex: 1;
+      text-align: center;
+      margin-right: 3rem;
+    }
+    .term-body {
+      padding: 1.25rem;
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      line-height: 1.9;
+    }
+    .term-prompt {
+      color: var(--text-dim);
+    }
+    .term-prompt .path { color: var(--azure); }
+    .term-prompt .chevron { color: var(--sage); }
+    .term-input { color: var(--text); font-weight: 500; }
+
+    /* cpt TUI inside terminal */
+    .cpt-box {
+      margin: 0.75rem 0;
+      border: 1px solid rgba(14,165,233,0.35);
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+    }
+    .cpt-header {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-bottom: 0.6rem;
+    }
+    .cpt-star { color: var(--coral); font-weight: 700; }
+    .cpt-name { color: var(--coral); font-weight: 700; }
+    .cpt-model { color: var(--azure); font-size: 0.75rem; }
+    .cpt-tab { color: var(--text-muted); font-size: 0.72rem; }
+    .cpt-prompt-text {
+      color: var(--text-dim);
+      font-style: italic;
+      font-size: 0.78rem;
+    }
+    .cpt-result {
+      margin-top: 0.5rem;
+    }
+    .cpt-result-arrow { color: var(--sage); font-weight: 700; }
+    .cpt-result-cmd { color: var(--sage); font-weight: 700; }
+    .cpt-refine {
+      margin-top: 0.5rem;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+    }
+    .cpt-refine .cursor-block {
+      display: inline-block;
+      width: 7px;
+      height: 14px;
+      background: var(--text-dim);
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+    .cpt-help {
+      margin-top: 0.6rem;
+      color: var(--text-muted);
+      font-size: 0.68rem;
+    }
+
+    /* second prompt after cpt */
+    .term-after {
+      margin-top: 0.5rem;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    /* ── INSTALL SECTION ── */
+    .install {
+      position: relative;
+      z-index: 1;
+      padding: 8rem 2.5rem;
+      max-width: 1300px;
+      margin: 0 auto;
+    }
+    .install-label {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+      font-weight: 700;
+    }
+    .install h2 {
+      font-family: var(--sans);
+      font-size: clamp(2.5rem, 6vw, 4.5rem);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      color: var(--text);
+      margin-bottom: 3.5rem;
+    }
+    .install h2 span {
+      background: linear-gradient(135deg, var(--coral), var(--azure));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .install-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+    }
+    .install-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      transition: border-color 0.3s;
+    }
+    .install-card:hover {
+      border-color: rgba(255,255,255,0.12);
+    }
+    .install-card-icon {
+      font-size: 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .install-card h3 {
+      font-family: var(--sans);
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 0.75rem;
+    }
+    .install-card p {
+      font-family: var(--sans);
+      font-size: 0.9rem;
+      color: var(--text-dim);
+      line-height: 1.65;
+      margin-bottom: 1.25rem;
+    }
+    .install-cmd {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 0.65rem 1rem;
+      border-radius: 8px;
+      display: block;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .install-cmd .prompt-char { color: var(--sage); }
+    .install-cmd .flag { color: var(--azure); }
+
+    /* ── FEATURES ── */
+    .features {
+      position: relative;
+      z-index: 1;
+      padding: 4rem 2.5rem 8rem;
+      max-width: 1300px;
+      margin: 0 auto;
+    }
+    .features-label {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+      font-weight: 700;
+    }
+    .features h2 {
+      font-family: var(--sans);
+      font-size: clamp(2.5rem, 6vw, 4.5rem);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      color: var(--text);
+      margin-bottom: 4rem;
+    }
+    .features h2 span {
+      background: linear-gradient(135deg, var(--coral), var(--azure));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .feature-list {
+      display: flex;
+      flex-direction: column;
+    }
+    .feature-row {
+      display: grid;
+      grid-template-columns: 80px 1fr;
+      gap: 2.5rem;
+      padding: 3rem 0;
+      border-top: 1px solid var(--border);
+      align-items: start;
+    }
+    .feature-row:last-child {
+      border-bottom: 1px solid var(--border);
+    }
+    .feature-num {
+      font-family: var(--mono);
+      font-size: 3.5rem;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      background: linear-gradient(135deg, var(--coral), var(--azure));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .feature-content h3 {
+      font-family: var(--sans);
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 0.65rem;
+      letter-spacing: -0.02em;
+    }
+    .feature-content p {
+      font-family: var(--sans);
+      font-size: 1rem;
+      color: var(--text-dim);
+      line-height: 1.75;
+      max-width: 55ch;
+    }
+    .feature-content code {
+      font-family: var(--mono);
+      font-size: 0.88rem;
+      color: var(--azure);
+    }
+
+    /* ── SHELLS SECTION ── */
+    .shells {
+      position: relative;
+      z-index: 1;
+      padding: 8rem 2.5rem;
+      max-width: 1300px;
+      margin: 0 auto;
+    }
+    .shells-label {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+      font-weight: 700;
+    }
+    .shells h2 {
+      font-family: var(--sans);
+      font-size: clamp(2.5rem, 6vw, 4.5rem);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      color: var(--text);
+      margin-bottom: 3.5rem;
+    }
+    .shells h2 span {
+      background: linear-gradient(135deg, var(--sage), var(--azure));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .shell-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .shell-tag {
+      font-family: var(--mono);
+      font-size: 0.9rem;
+      font-weight: 500;
+      padding: 0.7rem 1.5rem;
+      border-radius: 100px;
+      border: 1.5px solid var(--border);
+      color: var(--text-dim);
+      transition: all 0.25s;
+      cursor: default;
+    }
+    .shell-tag:hover {
+      border-color: transparent;
+      background: linear-gradient(135deg, var(--coral), var(--azure));
+      color: #fff;
+    }
+
+    /* ── CTA ── */
+    .cta {
+      position: relative;
+      z-index: 1;
+      padding: 8rem 2.5rem 6rem;
+      text-align: center;
+      max-width: 1300px;
+      margin: 0 auto;
+    }
+    .cta h2 {
+      font-family: var(--mono);
+      font-size: clamp(3rem, 10vw, 7rem);
+      font-weight: 800;
+      letter-spacing: -0.06em;
+      line-height: 0.9;
+      color: var(--text);
+      margin-bottom: 2.5rem;
+    }
+    .cta h2 .accent {
+      background: linear-gradient(135deg, var(--coral), var(--azure));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .cta-cmd {
+      font-family: var(--mono);
+      font-size: clamp(0.85rem, 1.5vw, 1.1rem);
+      color: var(--text-dim);
+      margin-bottom: 0.5rem;
+    }
+    .cta-cmd .p { color: var(--coral); }
+    .cta-cmd .c { color: var(--text); font-weight: 700; }
+    .cta-sub {
+      font-family: var(--sans);
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-top: 2rem;
+    }
+    .cta-sub a {
+      color: var(--azure);
+      text-decoration: none;
+      border-bottom: 1px solid transparent;
+      transition: border-color 0.2s;
+    }
+    .cta-sub a:hover { border-color: var(--azure); }
+
+    /* ── FOOTER ── */
+    footer {
+      position: relative;
+      z-index: 1;
+      padding: 3rem 2.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top: 1px solid var(--border);
+      max-width: 1300px;
+      margin: 0 auto;
+      font-family: var(--sans);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    footer a {
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    footer a:hover { color: var(--coral); }
+
+    /* ── ANIMATIONS ── */
+    .fade-up {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+    .fade-up.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* stagger children */
+    .stagger > .fade-up:nth-child(1) { transition-delay: 0s; }
+    .stagger > .fade-up:nth-child(2) { transition-delay: 0.08s; }
+    .stagger > .fade-up:nth-child(3) { transition-delay: 0.16s; }
+    .stagger > .fade-up:nth-child(4) { transition-delay: 0.24s; }
+    .stagger > .fade-up:nth-child(5) { transition-delay: 0.32s; }
+    .stagger > .fade-up:nth-child(6) { transition-delay: 0.40s; }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 900px) {
+      nav { padding: 1rem 1.5rem; }
+      .nav-links { gap: 1rem; }
+      .hero {
+        grid-template-columns: 1fr;
+        gap: 3rem;
+        min-height: auto;
+        padding: 6rem 1.5rem 3rem;
+      }
+      .install { padding: 5rem 1.5rem; }
+      .install-grid { grid-template-columns: 1fr; }
+      .features { padding: 3rem 1.5rem 5rem; }
+      .feature-row {
+        grid-template-columns: 48px 1fr;
+        gap: 1.25rem;
+        padding: 2rem 0;
+      }
+      .feature-num { font-size: 2rem; }
+      .shells { padding: 5rem 1.5rem; }
+      .cta { padding: 5rem 1.5rem 4rem; }
+      footer {
+        flex-direction: column;
+        gap: 0.75rem;
+        text-align: center;
+        padding: 2rem 1.5rem;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .nav-links .hide-sm { display: none; }
+      .hero-badges { gap: 0.5rem; }
+      .badge { font-size: 0.62rem; padding: 0.3rem 0.7rem; }
+      .shell-tags { gap: 0.5rem; }
+      .shell-tag { font-size: 0.78rem; padding: 0.55rem 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="glow glow-coral"></div>
+<div class="glow glow-azure"></div>
+
+<nav>
+  <a href="#" class="wordmark">cpt<span>.</span></a>
+  <ul class="nav-links">
+    <li><a href="#install">Install</a></li>
+    <li><a href="#features" class="hide-sm">Features</a></li>
+    <li><a href="#shells" class="hide-sm">Shells</a></li>
+    <li><a href="https://github.com/burkeholland/cpt" target="_blank">GitHub ↗</a></li>
+  </ul>
+</nav>
+
+<!-- ── HERO ── -->
+<section class="hero">
+  <div class="hero-left fade-up">
+    <h1>cpt<span class="accent">.</span></h1>
+    <p class="hero-tagline">
+      Translates what you're thinking into the command you need.
+      <strong>One keystroke. Any shell.</strong>
+    </p>
+    <div class="hero-badges">
+      <span class="badge"><span class="dot dot-coral"></span>Ctrl+K</span>
+      <span class="badge"><span class="dot dot-azure"></span>GitHub Copilot</span>
+      <span class="badge"><span class="dot dot-sage"></span>Cross-platform</span>
+    </div>
+  </div>
+  <div class="hero-right fade-up" style="transition-delay: 0.15s">
+    <div class="terminal">
+      <div class="term-bar">
+        <div class="term-dots"><span></span><span></span><span></span></div>
+        <span class="term-title">~/projects/webapp</span>
+      </div>
+      <div class="term-body">
+        <!-- prompt line -->
+        <div class="term-prompt">
+          <span class="path">~/projects/webapp</span> <span class="chevron">❯</span> <span class="term-input">ctrl+k</span>
+        </div>
+
+        <!-- cpt TUI box -->
+        <div class="cpt-box">
+          <div class="cpt-header">
+            <span class="cpt-star">✦</span>
+            <span class="cpt-name">cpt</span>
+            <span class="cpt-model">gpt-4.1</span>
+            <span class="cpt-tab">tab↹ model</span>
+          </div>
+          <div class="cpt-prompt-text">find all node_modules and delete them</div>
+          <div class="cpt-result">
+            <span class="cpt-result-arrow">▸</span> <span class="cpt-result-cmd">find . -name "node_modules" -type d -prune -exec rm -rf {} +</span>
+          </div>
+          <div class="cpt-refine">Refine your request... <span class="cursor-block"></span></div>
+          <div class="cpt-help">enter accept · type to refine · esc quit</div>
+        </div>
+
+        <!-- command inserted on prompt -->
+        <div class="term-after">
+          <div class="term-prompt">
+            <span class="path">~/projects/webapp</span> <span class="chevron">❯</span> <span class="term-input">find . -name "node_modules" -type d -prune -exec rm -rf {} +</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── INSTALL ── -->
+<section class="install" id="install">
+  <div class="install-label fade-up">Get started</div>
+  <h2 class="fade-up">One install.<br><span>Every shell.</span></h2>
+  <div class="install-grid stagger">
+    <div class="install-card fade-up">
+      <div class="install-card-icon">🍎</div>
+      <h3>macOS</h3>
+      <p>Homebrew or direct binary. Supports zsh, bash, and fish out of the box.</p>
+      <code class="install-cmd"><span class="prompt-char">$</span> go install github.com/burkeholland/cpt@latest</code>
+    </div>
+    <div class="install-card fade-up">
+      <div class="install-card-icon">🐧</div>
+      <h3>Linux</h3>
+      <p>Same binary, same experience. Works on X11 and Wayland, with clipboard support for both.</p>
+      <code class="install-cmd"><span class="prompt-char">$</span> go install github.com/burkeholland/cpt@latest</code>
+    </div>
+    <div class="install-card fade-up">
+      <div class="install-card-icon">⊞</div>
+      <h3>Windows</h3>
+      <p>Native PowerShell integration with PSReadLine. No WSL required.</p>
+      <code class="install-cmd"><span class="prompt-char">></span> go install github.com/burkeholland/cpt@latest</code>
+    </div>
+  </div>
+
+  <div style="margin-top: 2.5rem;" class="fade-up">
+    <p style="font-family: var(--sans); font-size: 0.9rem; color: var(--text-dim); line-height: 1.7;">
+      Then bind it to <code style="font-family: var(--mono); color: var(--azure); font-size: 0.85rem;">Ctrl+K</code> in your shell:
+    </p>
+    <code class="install-cmd" style="margin-top: 0.75rem; display: inline-block;">
+      <span class="prompt-char">$</span> cpt <span class="flag">--install</span>
+    </code>
+  </div>
+</section>
+
+<!-- ── FEATURES ── -->
+<section class="features" id="features">
+  <div class="features-label fade-up">How it works</div>
+  <h2 class="fade-up">Think it.<br><span>Run it.</span></h2>
+  <div class="feature-list stagger">
+    <div class="feature-row fade-up">
+      <div class="feature-num">01</div>
+      <div class="feature-content">
+        <h3>Describe, don't memorize</h3>
+        <p>Type what you want in plain English. cpt calls GitHub Copilot to translate your intent into the right command for your shell — bash, zsh, fish, or PowerShell.</p>
+      </div>
+    </div>
+    <div class="feature-row fade-up">
+      <div class="feature-num">02</div>
+      <div class="feature-content">
+        <h3>Review and refine</h3>
+        <p>See the command before it runs. Not quite right? Type a follow-up to iterate — cpt regenerates instantly. When it's perfect, press <code>enter</code> and it drops right onto your prompt.</p>
+      </div>
+    </div>
+    <div class="feature-row fade-up">
+      <div class="feature-num">03</div>
+      <div class="feature-content">
+        <h3>Zero footprint</h3>
+        <p>cpt runs in your terminal's alternate screen buffer. When you're done, it vanishes completely — no leftover output, no clutter. Just the command on your prompt, ready to go.</p>
+      </div>
+    </div>
+    <div class="feature-row fade-up">
+      <div class="feature-num">04</div>
+      <div class="feature-content">
+        <h3>Pick your model</h3>
+        <p>Switch between any model in your Copilot subscription with <code>tab</code>. Claude, GPT, Gemini — whatever you prefer. cpt remembers your last choice.</p>
+      </div>
+    </div>
+    <div class="feature-row fade-up">
+      <div class="feature-num">05</div>
+      <div class="feature-content">
+        <h3>Shell-native output</h3>
+        <p>cpt knows which shell and OS you're running. On PowerShell you get PowerShell commands, on bash you get bash. No translating between ecosystems.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── SHELLS ── -->
+<section class="shells" id="shells">
+  <div class="shells-label fade-up">Compatibility</div>
+  <h2 class="fade-up">Every shell.<br><span>Every platform.</span></h2>
+  <div class="shell-tags stagger">
+    <span class="shell-tag fade-up">zsh</span>
+    <span class="shell-tag fade-up">bash</span>
+    <span class="shell-tag fade-up">fish</span>
+    <span class="shell-tag fade-up">PowerShell</span>
+    <span class="shell-tag fade-up">macOS</span>
+    <span class="shell-tag fade-up">Linux</span>
+    <span class="shell-tag fade-up">Windows</span>
+    <span class="shell-tag fade-up">Wayland</span>
+    <span class="shell-tag fade-up">X11</span>
+  </div>
+</section>
+
+<!-- ── CTA ── -->
+<section class="cta">
+  <h2 class="fade-up">Get<br>cpt<span class="accent">.</span></h2>
+  <div class="fade-up">
+    <div class="cta-cmd"><span class="p">$</span> <span class="c">go install github.com/burkeholland/cpt@latest</span></div>
+    <div class="cta-cmd" style="margin-top: 0.5rem;"><span class="p">$</span> cpt <span style="color: var(--azure);">--install</span></div>
+  </div>
+  <p class="cta-sub fade-up">
+    Uses your existing <a href="https://github.com/features/copilot" target="_blank">GitHub Copilot</a> subscription. No new accounts.
+  </p>
+</section>
+
+<footer>
+  <span>Built by <a href="https://postrboard.com" target="_blank">PostrBoard</a></span>
+  <span>cpt is open source</span>
+</footer>
+
+<script>
+  // Intersection Observer for scroll reveals
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+      }
+    });
+  }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+  document.querySelectorAll('.fade-up').forEach(el => observer.observe(el));
+</script>
+
+</body>
+</html>
