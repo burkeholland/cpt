@@ -29,6 +29,7 @@ $tmp = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempP
 try {
     $zipPath = Join-Path $tmp "cpt.zip"
     Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+    Unblock-File -Path $zipPath
     Expand-Archive -Path $zipPath -DestinationPath $tmp -Force
 
     # Install
