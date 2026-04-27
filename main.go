@@ -184,6 +184,7 @@ bind \ck cpt-widget
 if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
     function Invoke-Cpt {
         $result = & %s
+        [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
         if ($result) {
             [Microsoft.PowerShell.PSConsoleReadLine]::Insert($result)
         }
@@ -239,6 +240,6 @@ func printSetup() {
 	fmt.Println(`  bind \ck cpt-widget`)
 	fmt.Println()
 	fmt.Println("  # PowerShell ($PROFILE)")
-	fmt.Println(`  function Invoke-Cpt { $result = & cpt; if ($result) { [Microsoft.PowerShell.PSConsoleReadLine]::Insert($result) } }`)
+	fmt.Println(`  function Invoke-Cpt { $result = & cpt; [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt(); if ($result) { [Microsoft.PowerShell.PSConsoleReadLine]::Insert($result) } }`)
 	fmt.Println(`  Set-PSReadLineKeyHandler -Chord 'Ctrl+k' -ScriptBlock { Invoke-Cpt }`)
 }
