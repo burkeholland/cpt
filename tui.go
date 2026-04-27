@@ -206,11 +206,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Account for panel border (1) and padding (1) on each side
-		innerWidth := msg.Width - 4
-		if innerWidth > 0 {
-			m.textInput.Width = innerWidth
-			m.refineInput.Width = innerWidth
+		// On Windows, WindowSizeMsg may report buffer width instead of
+		// visible window width. Use the actual console window width.
+		if w := consoleWindowWidth(); w > 0 && w < m.width {
+			m.width = w
 		}
 		return m, nil
 
@@ -348,6 +347,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	var content string
 
+	// Inner width accounts for border (2) and padding (2)
+	innerWidth := m.width - 4
+	if innerWidth <= 0 {
+		innerWidth = 60
+	}
+
 	switch m.state {
 	case stateInput:
 		modelTag := helpStyle.Render("…")
@@ -362,18 +367,20 @@ func (m model) View() string {
 		if preview == "" {
 			preview = m.spinner.View() + " Thinking..."
 		}
-		content = titleStyle.Render("✦ cpt") + " " + promptStyle.Render(m.prompt) + "\n" +
+		header := titleStyle.Render("✦ cpt") + " " + promptStyle.Render(m.prompt)
+		content = renderer.NewStyle().MaxWidth(innerWidth).Render(header) + "\n" +
 			preview
 
 	case stateResult:
-		content = selectedCmdStyle.Render("▸ "+m.result) + "\n\n" +
+		cmdText := "▸ " + m.result
+		content = selectedCmdStyle.MaxWidth(innerWidth).Render(cmdText) + "\n\n" +
 			m.refineInput.View() + "\n" +
 			helpStyle.Render("enter accept • type to refine • esc quit")
 
 	case stateError:
 		errMsg := m.err.Error()
 		content = titleStyle.Render("✦ cpt") + "\n\n" +
-			errorStyle.Render("Error: "+errMsg) + "\n\n"
+			errorStyle.MaxWidth(innerWidth).Render("Error: "+errMsg) + "\n\n"
 		// Provide actionable guidance based on common failure modes
 		if strings.Contains(errMsg, "copilot") || strings.Contains(errMsg, "start") || strings.Contains(errMsg, "token") || strings.Contains(errMsg, "auth") {
 			content += errorHintStyle.Render("Make sure GitHub Copilot CLI is installed and you're logged in:") + "\n" +
@@ -390,8 +397,8 @@ func (m model) View() string {
 	if m.state == stateError {
 		style = style.BorderForeground(coral)
 	}
-	if m.width > 0 {
-		style = style.Width(m.width - 2) // subtract border width
-	}
+	// Always use a fixed panel width so all frames are the same size.
+	// This prevents ghost characters from previous wider frames on Windows.
+	style = style.Width(62)
 	return style.Render(content) + "\n"
 }
