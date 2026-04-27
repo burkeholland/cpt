@@ -1,4 +1,4 @@
-# cpt installer for Windows/PowerShell
+﻿# cpt installer for Windows/PowerShell
 # Usage: irm https://raw.githubusercontent.com/burkeholland/cpt/main/install.ps1 | iex
 $ErrorActionPreference = 'Stop'
 
@@ -32,6 +32,9 @@ try {
     Unblock-File -Path $zipPath
     Expand-Archive -Path $zipPath -DestinationPath $tmp -Force
 
+    # Unblock the extracted exe so Windows doesn't block it
+    Unblock-File -Path (Join-Path $tmp "cpt.exe")
+
     # Install
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
     Copy-Item (Join-Path $tmp "cpt.exe") (Join-Path $installDir "cpt.exe") -Force
@@ -40,7 +43,7 @@ try {
 }
 
 Write-Host ""
-Write-Host "✓ cpt v$version installed to $installDir\cpt.exe" -ForegroundColor Green
+Write-Host "[OK] cpt v$version installed to $installDir\cpt.exe" -ForegroundColor Green
 Write-Host ""
 
 # Check if install dir is in PATH
