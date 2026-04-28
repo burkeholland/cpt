@@ -66,9 +66,13 @@ func main() {
 	case actionInsert:
 		// Print to stdout — the shell widget captures this via $(cpt)
 		// and places it on the prompt ready to execute
-		fmt.Print(fm.result)
+		fmt.Print(fm.selectedCommand())
+	case actionRun:
+		// Print to stdout — the shell widget captures this and executes
+		fmt.Print(fm.selectedCommand())
+		os.Exit(exitCodeRun)
 	case actionCopy:
-		if err := copyToClipboard(fm.result); err != nil {
+		if err := copyToClipboard(fm.selectedCommand()); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to copy: %v\n", err)
 			os.Exit(1)
 		}
@@ -165,14 +169,33 @@ func installWidget() {
 	case "bash":
 		widget = fmt.Sprintf(`
 # cpt - terminal copilot (Ctrl+K)
-cpt-readline() { local cmd; cmd=$(%s 2>/dev/tty); READLINE_LINE="$cmd"; READLINE_POINT=${#cmd}; }
+cpt-readline() {
+    local cmd status
+    cmd=$(%s 2>/dev/tty)
+    status=$?
+    if [ "$status" -eq 42 ]; then
+        READLINE_LINE="$cmd"
+        READLINE_POINT=${#cmd}
+        # Bash bind -x cannot auto-execute; user must press Enter
+    elif [ "$status" -eq 0 ] && [ -n "$cmd" ]; then
+        READLINE_LINE="$cmd"
+        READLINE_POINT=${#cmd}
+    fi
+}
 bind -x '"\C-k": cpt-readline'
 `, shellBin)
 	case "fish":
 		widget = fmt.Sprintf(`
 # cpt - terminal copilot (Ctrl+K)
 function cpt-widget
-    commandline (%s 2>/dev/tty)
+    set -l cmd (%s 2>/dev/tty)
+    set -l cpt_status $status
+    if test $cpt_status -eq 42
+        commandline $cmd
+        commandline -f execute
+    else if test $cpt_status -eq 0 -a -n "$cmd"
+        commandline $cmd
+    end
     commandline -f repaint
 end
 bind \ck cpt-widget
@@ -184,8 +207,12 @@ bind \ck cpt-widget
 if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
     function Invoke-Cpt {
         $result = & %s
+        $exitCode = $LASTEXITCODE
         if ($result) {
             [Microsoft.PowerShell.PSConsoleReadLine]::Insert($result)
+            if ($exitCode -eq 42) {
+                [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+            }
         }
     }
     Set-PSReadLineKeyHandler -Chord 'Ctrl+k' -ScriptBlock { Invoke-Cpt }
@@ -195,7 +222,19 @@ if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
 	default:
 		widget = fmt.Sprintf(`
 # cpt - terminal copilot (Ctrl+K)
-cpt-widget() { BUFFER=$(%s 2>/dev/tty); CURSOR=$#BUFFER; zle redisplay }
+cpt-widget() {
+    local cmd
+    cmd=$(%s 2>/dev/tty)
+    local cpt_status=$?
+    if [[ $cpt_status -eq 42 ]]; then
+        BUFFER="$cmd"
+        zle accept-line
+    elif [[ $cpt_status -eq 0 ]] && [[ -n "$cmd" ]]; then
+        BUFFER="$cmd"
+        CURSOR=$#BUFFER
+        zle redisplay
+    fi
+}
 zle -N cpt-widget
 bindkey '^K' cpt-widget
 `, shellBin)
@@ -226,19 +265,56 @@ func printSetup() {
 	fmt.Println("Run `cpt --install` to auto-install, or add manually:")
 	fmt.Println()
 	fmt.Println("  # Zsh (~/.zshrc)")
-	fmt.Println(`  cpt-widget() { BUFFER=$(cpt 2>/dev/tty); CURSOR=$#BUFFER; zle redisplay }`)
+	fmt.Println(`  cpt-widget() {`)
+	fmt.Println(`      local cmd`)
+	fmt.Println(`      cmd=$(cpt 2>/dev/tty)`)
+	fmt.Println(`      local cpt_status=$?`)
+	fmt.Println(`      if [[ $cpt_status -eq 42 ]]; then`)
+	fmt.Println(`          BUFFER="$cmd"`)
+	fmt.Println(`          zle accept-line`)
+	fmt.Println(`      elif [[ $cpt_status -eq 0 ]] && [[ -n "$cmd" ]]; then`)
+	fmt.Println(`          BUFFER="$cmd"`)
+	fmt.Println(`          CURSOR=$#BUFFER`)
+	fmt.Println(`          zle redisplay`)
+	fmt.Println(`      fi`)
+	fmt.Println(`  }`)
 	fmt.Println(`  zle -N cpt-widget`)
 	fmt.Println(`  bindkey '^K' cpt-widget`)
 	fmt.Println()
 	fmt.Println("  # Bash (~/.bashrc)")
-	fmt.Println(`  cpt-readline() { local cmd; cmd=$(cpt 2>/dev/tty); READLINE_LINE="$cmd"; READLINE_POINT=${#cmd}; }`)
+	fmt.Println(`  cpt-readline() {`)
+	fmt.Println(`      local cmd status`)
+	fmt.Println(`      cmd=$(cpt 2>/dev/tty)`)
+	fmt.Println(`      status=$?`)
+	fmt.Println(`      if [ "$status" -eq 0 ] && [ -n "$cmd" ]; then`)
+	fmt.Println(`          READLINE_LINE="$cmd"`)
+	fmt.Println(`          READLINE_POINT=${#cmd}`)
+	fmt.Println(`      fi`)
+	fmt.Println(`  }`)
 	fmt.Println(`  bind -x '"\C-k": cpt-readline'`)
 	fmt.Println()
 	fmt.Println("  # Fish (~/.config/fish/config.fish)")
-	fmt.Println(`  function cpt-widget; commandline (cpt 2>/dev/tty); commandline -f repaint; end`)
+	fmt.Println(`  function cpt-widget`)
+	fmt.Println(`      set -l cmd (cpt 2>/dev/tty)`)
+	fmt.Println(`      set -l cpt_status $status`)
+	fmt.Println(`      if test $cpt_status -eq 42`)
+	fmt.Println(`          commandline $cmd`)
+	fmt.Println(`          commandline -f execute`)
+	fmt.Println(`      else if test $cpt_status -eq 0 -a -n "$cmd"`)
+	fmt.Println(`          commandline $cmd`)
+	fmt.Println(`      end`)
+	fmt.Println(`      commandline -f repaint`)
+	fmt.Println(`  end`)
 	fmt.Println(`  bind \ck cpt-widget`)
 	fmt.Println()
 	fmt.Println("  # PowerShell ($PROFILE)")
-	fmt.Println(`  function Invoke-Cpt { $result = & cpt; if ($result) { [Microsoft.PowerShell.PSConsoleReadLine]::Insert($result) } }`)
+	fmt.Println(`  function Invoke-Cpt {`)
+	fmt.Println(`      $result = & cpt`)
+	fmt.Println(`      $exitCode = $LASTEXITCODE`)
+	fmt.Println(`      if ($result) {`)
+	fmt.Println(`          [Microsoft.PowerShell.PSConsoleReadLine]::Insert($result)`)
+	fmt.Println(`          if ($exitCode -eq 42) { [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine() }`)
+	fmt.Println(`      }`)
+	fmt.Println(`  }`)
 	fmt.Println(`  Set-PSReadLineKeyHandler -Chord 'Ctrl+k' -ScriptBlock { Invoke-Cpt }`)
 }

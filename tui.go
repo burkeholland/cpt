@@ -16,6 +16,7 @@ const (
 	stateInput viewState = iota
 	stateLoading
 	stateResult
+	stateConfirmRun
 	stateError
 )
 
@@ -24,8 +25,22 @@ type exitActionType int
 const (
 	actionNone exitActionType = iota
 	actionInsert
+	actionRun
 	actionCopy
 )
+
+const exitCodeRun = 42
+
+// CommandCandidate represents a single command alternative extracted from the AI response.
+type CommandCandidate struct {
+	Command string
+}
+
+// ParsedResponse holds the explanation and command candidates from an AI response.
+type ParsedResponse struct {
+	Explanation string
+	Candidates  []CommandCandidate
+}
 
 // Messages
 type modelsLoadedMsg struct {
@@ -49,7 +64,9 @@ type model struct {
 	copilot     *copilotClient
 	models      []string
 	modelIndex  int
-	result      string
+	candidates  []CommandCandidate
+	selectedIdx int
+	explanation string
 	streaming   string
 	err         error
 	exitAction  exitActionType
@@ -86,29 +103,69 @@ func newModel(inlinePrompt string) model {
 	}
 }
 
-// parseCommands extracts runnable shell commands from the response.
-// It handles: bare lines, ```-fenced blocks, and lines starting with $ prompts.
-func parseCommands(raw string) []string {
-	var commands []string
+// selectedCommand returns the currently selected command text.
+func (m model) selectedCommand() string {
+	if len(m.candidates) == 0 {
+		return ""
+	}
+	return m.candidates[m.selectedIdx].Command
+}
+
+// parseResponse extracts an explanation and runnable commands from the AI response.
+// Supports the structured EXPLANATION:/COMMAND: format as well as fenced code blocks
+// and bare command lines for backward compatibility.
+func parseResponse(raw string) ParsedResponse {
+	var resp ParsedResponse
 	lines := strings.Split(raw, "\n")
 
+	// First pass: check for structured EXPLANATION:/COMMAND: format
+	hasStructured := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "COMMAND:") || strings.HasPrefix(trimmed, "EXPLANATION:") {
+			hasStructured = true
+			break
+		}
+	}
+
+	if hasStructured {
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "EXPLANATION:") {
+				resp.Explanation = strings.TrimSpace(strings.TrimPrefix(trimmed, "EXPLANATION:"))
+			} else if strings.HasPrefix(trimmed, "COMMAND:") {
+				cmd := strings.TrimSpace(strings.TrimPrefix(trimmed, "COMMAND:"))
+				if cmd != "" {
+					resp.Candidates = append(resp.Candidates, CommandCandidate{Command: cmd})
+				}
+			}
+		}
+		return resp
+	}
+
+	// Fallback: fenced code blocks and bare command lines
 	inFence := false
 	fencePattern := regexp.MustCompile("^```")
+	var fenceLines []string
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
 		// Toggle code fence state
 		if fencePattern.MatchString(trimmed) {
+			if inFence && len(fenceLines) > 0 {
+				cmd := strings.TrimSpace(strings.Join(fenceLines, "\n"))
+				if cmd != "" {
+					resp.Candidates = append(resp.Candidates, CommandCandidate{Command: cmd})
+				}
+				fenceLines = nil
+			}
 			inFence = !inFence
 			continue
 		}
 
-		// Inside a code fence, take non-empty lines
 		if inFence {
-			if trimmed != "" {
-				commands = append(commands, trimmed)
-			}
+			fenceLines = append(fenceLines, trimmed)
 			continue
 		}
 
@@ -116,7 +173,6 @@ func parseCommands(raw string) []string {
 		if trimmed == "" {
 			continue
 		}
-		// Skip lines that look like prose (start with common prose patterns)
 		if isProseOrMarkdown(trimmed) {
 			continue
 		}
@@ -126,10 +182,18 @@ func parseCommands(raw string) []string {
 			trimmed = strings.TrimPrefix(trimmed, "$ ")
 		}
 
-		commands = append(commands, trimmed)
+		resp.Candidates = append(resp.Candidates, CommandCandidate{Command: trimmed})
 	}
 
-	return commands
+	// Handle unclosed fence
+	if inFence && len(fenceLines) > 0 {
+		cmd := strings.TrimSpace(strings.Join(fenceLines, "\n"))
+		if cmd != "" {
+			resp.Candidates = append(resp.Candidates, CommandCandidate{Command: cmd})
+		}
+	}
+
+	return resp
 }
 
 func isProseOrMarkdown(s string) bool {
@@ -154,6 +218,29 @@ func isProseOrMarkdown(s string) bool {
 	// Lines ending with : are usually labels
 	if strings.HasSuffix(s, ":") {
 		return true
+	}
+	return false
+}
+
+// isDestructiveCommand checks if a command looks dangerous enough to require confirmation before running.
+func isDestructiveCommand(cmd string) bool {
+	lower := strings.ToLower(cmd)
+	patterns := []string{
+		"rm -rf", "rm -r ", "rm -fr",
+		"sudo ",
+		"chmod -r", "chown -r",
+		"kill -9", "killall",
+		"dd ",
+		"mkfs",
+		"> /dev/",
+		"docker system prune",
+		"kubectl delete",
+		":(){", "fork bomb",
+	}
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
 	}
 	return false
 }
@@ -250,6 +337,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case stateResult:
 			switch msg.String() {
+			case "up":
+				if len(m.candidates) > 1 {
+					m.selectedIdx = (m.selectedIdx - 1 + len(m.candidates)) % len(m.candidates)
+				}
+				return m, nil
+			case "down":
+				if len(m.candidates) > 1 {
+					m.selectedIdx = (m.selectedIdx + 1) % len(m.candidates)
+				}
+				return m, nil
 			case "enter":
 				refineText := strings.TrimSpace(m.refineInput.Value())
 				if refineText != "" {
@@ -260,13 +357,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.streaming = ""
 					return m, tea.Batch(m.spinner.Tick, m.sendPrompt())
 				}
-				// Empty input: insert the command
+				// Empty input: insert the selected command
 				m.exitAction = actionInsert
+				m.copilot.stop()
+				return m, tea.Quit
+			case "ctrl+enter":
+				// Run immediately — with safety check for destructive commands
+				if isDestructiveCommand(m.selectedCommand()) {
+					m.state = stateConfirmRun
+					return m, nil
+				}
+				m.exitAction = actionRun
 				m.copilot.stop()
 				return m, tea.Quit
 			case "ctrl+c", "esc":
 				m.copilot.stop()
 				return m, tea.Quit
+			}
+		case stateConfirmRun:
+			switch msg.String() {
+			case "y", "Y":
+				m.exitAction = actionRun
+				m.copilot.stop()
+				return m, tea.Quit
+			case "n", "N", "esc":
+				m.state = stateResult
+				return m, nil
 			}
 		case stateError:
 			if msg.String() == "ctrl+c" || msg.String() == "esc" || msg.String() == "q" || msg.String() == "enter" {
@@ -307,12 +423,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamDoneMsg:
 		raw := strings.TrimSpace(m.streaming)
-		commands := parseCommands(raw)
-		if len(commands) > 0 {
-			m.result = commands[0]
-		} else {
-			m.result = raw
+		parsed := parseResponse(raw)
+		m.explanation = parsed.Explanation
+		m.candidates = parsed.Candidates
+		if len(m.candidates) == 0 {
+			m.candidates = []CommandCandidate{{Command: raw}}
 		}
+		m.selectedIdx = 0
 		m.state = stateResult
 		m.refineInput.Focus()
 		return m, textinput.Blink
@@ -361,14 +478,51 @@ func (m model) View() string {
 		preview := m.streaming
 		if preview == "" {
 			preview = m.spinner.View() + " Thinking..."
+		} else {
+			// Strip EXPLANATION:/COMMAND: prefixes during streaming for cleaner display
+			var cleaned []string
+			for _, line := range strings.Split(preview, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "EXPLANATION:") {
+					cleaned = append(cleaned, helpStyle.Render(strings.TrimSpace(strings.TrimPrefix(trimmed, "EXPLANATION:"))))
+				} else if strings.HasPrefix(trimmed, "COMMAND:") {
+					cleaned = append(cleaned, selectedCmdStyle.Render("▸ "+strings.TrimSpace(strings.TrimPrefix(trimmed, "COMMAND:"))))
+				} else if trimmed != "" {
+					cleaned = append(cleaned, trimmed)
+				}
+			}
+			if len(cleaned) > 0 {
+				preview = strings.Join(cleaned, "\n")
+			}
 		}
 		content = titleStyle.Render("✦ cpt") + " " + promptStyle.Render(m.prompt) + "\n" +
 			preview
 
 	case stateResult:
-		content = selectedCmdStyle.Render("▸ "+m.result) + "\n\n" +
-			m.refineInput.View() + "\n" +
-			helpStyle.Render("enter accept • type to refine • esc quit")
+		if m.explanation != "" {
+			content += helpStyle.Render(m.explanation) + "\n"
+		}
+		for i, c := range m.candidates {
+			if i == m.selectedIdx {
+				content += selectedCmdStyle.Render("▸ " + c.Command)
+			} else {
+				content += unselectedCmdStyle.Render("  " + c.Command)
+			}
+			if i < len(m.candidates)-1 {
+				content += "\n"
+			}
+		}
+		content += "\n\n" + m.refineInput.View() + "\n"
+		if len(m.candidates) > 1 {
+			content += helpStyle.Render("enter accept • ctrl+enter run • ↑↓ alternatives • type to refine • esc quit")
+		} else {
+			content += helpStyle.Render("enter accept • ctrl+enter run • type to refine • esc quit")
+		}
+
+	case stateConfirmRun:
+		content = errorStyle.Render("⚠ This command looks destructive:") + "\n" +
+			selectedCmdStyle.Render("▸ "+m.selectedCommand()) + "\n\n" +
+			helpStyle.Render("Run it? (y/n)")
 
 	case stateError:
 		errMsg := m.err.Error()
