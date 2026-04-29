@@ -45,7 +45,8 @@ func main() {
 		inlinePrompt = strings.Join(os.Args[1:], " ")
 	}
 
-	m := newModel(inlinePrompt)
+	bare := !isStdoutPiped()
+	m := newModel(inlinePrompt, bare)
 
 	// Render TUI directly to TTY so colors work even when
 	// stdout is captured by a shell widget

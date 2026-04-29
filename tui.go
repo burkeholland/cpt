@@ -72,11 +72,12 @@ type model struct {
 	exitAction  exitActionType
 	prompt      string
 	shell       string
+	bare        bool
 	width       int
 	height      int
 }
 
-func newModel(inlinePrompt string) model {
+func newModel(inlinePrompt string, bare bool) model {
 	ti := textinput.New()
 	ti.Placeholder = "Ask anything... (e.g., kill process on port 3000)"
 	ti.Focus()
@@ -100,6 +101,7 @@ func newModel(inlinePrompt string) model {
 		copilot:     newCopilotClient(),
 		prompt:      inlinePrompt,
 		shell:       detectShell(),
+		bare:        bare,
 	}
 }
 
@@ -513,11 +515,21 @@ func (m model) View() string {
 			}
 		}
 		content += "\n\n" + m.refineInput.View() + "\n"
-		if len(m.candidates) > 1 {
-			content += helpStyle.Render("enter accept • ctrl+enter run • ↑↓ alternatives • type to refine • esc quit")
+		var hints string
+		if m.bare {
+			if len(m.candidates) > 1 {
+				hints = "enter copy • ↑↓ alternatives • type to refine • esc quit"
+			} else {
+				hints = "enter copy • type to refine • esc quit"
+			}
 		} else {
-			content += helpStyle.Render("enter accept • ctrl+enter run • type to refine • esc quit")
+			if len(m.candidates) > 1 {
+				hints = "enter accept • ctrl+enter run • ↑↓ alternatives • type to refine • esc quit"
+			} else {
+				hints = "enter accept • ctrl+enter run • type to refine • esc quit"
+			}
 		}
+		content += helpStyle.Render(hints)
 
 	case stateConfirmRun:
 		content = errorStyle.Render("⚠ This command looks destructive:") + "\n" +
