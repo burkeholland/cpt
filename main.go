@@ -13,6 +13,16 @@ import (
 
 var version = "dev"
 
+// isStdoutPiped returns true when stdout is a pipe (inside shell widget),
+// false when stdout is a TTY (running cpt directly).
+func isStdoutPiped() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) == 0
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		fmt.Println("cpt " + version)
@@ -64,19 +74,40 @@ func main() {
 
 	switch fm.exitAction {
 	case actionInsert:
-		// Print to stdout — the shell widget captures this via $(cpt)
-		// and places it on the prompt ready to execute
-		fmt.Print(fm.selectedCommand())
+		cmd := fm.selectedCommand()
+		if isStdoutPiped() {
+			// Inside shell widget $(cpt) — print to stdout for capture
+			fmt.Print(cmd)
+		} else {
+			// Running bare (cpt typed directly) — copy to clipboard
+			if err := copyToClipboard(cmd); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to copy: %v\n", err)
+				fmt.Print(cmd) // fallback: print to stdout
+			} else {
+				fmt.Fprintf(ttyOut, "✓ Copied to clipboard\n")
+			}
+		}
 	case actionRun:
-		// Print to stdout — the shell widget captures this and executes
-		fmt.Print(fm.selectedCommand())
-		os.Exit(exitCodeRun)
+		cmd := fm.selectedCommand()
+		if isStdoutPiped() {
+			// Inside shell widget — print + exit 42 signals "execute"
+			fmt.Print(cmd)
+			os.Exit(exitCodeRun)
+		} else {
+			// Running bare — copy to clipboard with note
+			if err := copyToClipboard(cmd); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to copy: %v\n", err)
+				fmt.Print(cmd)
+			} else {
+				fmt.Fprintf(ttyOut, "✓ Copied to clipboard — paste and run\n")
+			}
+		}
 	case actionCopy:
 		if err := copyToClipboard(fm.selectedCommand()); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to copy: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Fprintln(os.Stderr, "Copied to clipboard!")
+		fmt.Fprintf(ttyOut, "✓ Copied to clipboard\n")
 	}
 }
 
