@@ -363,7 +363,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.exitAction = actionInsert
 				m.copilot.stop()
 				return m, tea.Quit
-			case "ctrl+enter":
+			case "ctrl+r":
 				// Run immediately — with safety check for destructive commands
 				if isDestructiveCommand(m.selectedCommand()) {
 					m.state = stateConfirmRun
@@ -524,9 +524,9 @@ func (m model) View() string {
 			}
 		} else {
 			if len(m.candidates) > 1 {
-				hints = "enter accept • ctrl+enter run • ↑↓ alternatives • type to refine • esc quit"
+				hints = "enter accept • ctrl+r run • ↑↓ alternatives • type to refine • esc quit"
 			} else {
-				hints = "enter accept • ctrl+enter run • type to refine • esc quit"
+				hints = "enter accept • ctrl+r run • type to refine • esc quit"
 			}
 		}
 		content += helpStyle.Render(hints)
