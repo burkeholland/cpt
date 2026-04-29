@@ -196,16 +196,44 @@ func installWidget() {
 	}
 	binPath, _ = filepath.EvalSymlinks(binPath)
 
-	// Check if already installed
+	// Remove existing widget if present (upgrade)
 	existing, _ := os.ReadFile(rcPath)
-	if strings.Contains(string(existing), "cpt-widget") || strings.Contains(string(existing), "cpt-readline") || strings.Contains(string(existing), "Invoke-Cpt") {
-		fmt.Fprintf(os.Stderr, "✓ cpt is already installed in %s\n", rcPath)
-		if shell == "powershell" {
-			fmt.Fprintf(os.Stderr, "  Restart PowerShell or run: . $PROFILE\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "  Restart your shell or run: source %s\n", rcPath)
+	existingContent := string(existing)
+	if strings.Contains(existingContent, "cpt-widget") || strings.Contains(existingContent, "cpt-readline") || strings.Contains(existingContent, "Invoke-Cpt") {
+		// Remove old widget block between marker comments or the known patterns
+		lines := strings.Split(existingContent, "\n")
+		var cleaned []string
+		inWidget := false
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			// Detect start of cpt widget block
+			if strings.Contains(trimmed, "# cpt - terminal copilot") ||
+				strings.Contains(trimmed, "cpt-widget()") ||
+				strings.Contains(trimmed, "function cpt-widget") ||
+				strings.Contains(trimmed, "function Invoke-Cpt") ||
+				strings.Contains(trimmed, "cpt-readline") {
+				inWidget = true
+				continue
+			}
+			if inWidget {
+				// End of widget: bindkey line or Set-PSReadLineKeyHandler
+				if strings.Contains(trimmed, "bindkey") && strings.Contains(trimmed, "cpt-widget") ||
+					strings.Contains(trimmed, "Set-PSReadLineKeyHandler") ||
+					strings.Contains(trimmed, "bind \\ck cpt-widget") {
+					inWidget = false
+					continue
+				}
+				// Skip widget body lines
+				continue
+			}
+			cleaned = append(cleaned, line)
 		}
-		return
+		// Trim trailing empty lines from cleanup
+		for len(cleaned) > 0 && strings.TrimSpace(cleaned[len(cleaned)-1]) == "" {
+			cleaned = cleaned[:len(cleaned)-1]
+		}
+		existingContent = strings.Join(cleaned, "\n") + "\n"
+		os.WriteFile(rcPath, []byte(existingContent), 0644)
 	}
 
 	// Build widget with shell-safe path
@@ -273,16 +301,18 @@ if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
 		widget = fmt.Sprintf(`
 # cpt - terminal copilot (Ctrl+K)
 cpt-widget() {
-    local cmd
+    local cmd cpt_status
+    zle -I
     cmd=$(%s 2>/dev/tty)
-    local cpt_status=$?
-    if [[ $cpt_status -eq 42 ]]; then
+    cpt_status=$?
+    if [[ $cpt_status -eq 42 ]] && [[ -n "$cmd" ]]; then
         BUFFER="$cmd"
+        CURSOR=${#BUFFER}
         zle accept-line
     elif [[ $cpt_status -eq 0 ]] && [[ -n "$cmd" ]]; then
         BUFFER="$cmd"
-        CURSOR=$#BUFFER
-        zle redisplay
+        CURSOR=${#BUFFER}
+        zle reset-prompt
     fi
 }
 zle -N cpt-widget
@@ -316,16 +346,18 @@ func printSetup() {
 	fmt.Println()
 	fmt.Println("  # Zsh (~/.zshrc)")
 	fmt.Println(`  cpt-widget() {`)
-	fmt.Println(`      local cmd`)
+	fmt.Println(`      local cmd cpt_status`)
+	fmt.Println(`      zle -I`)
 	fmt.Println(`      cmd=$(cpt 2>/dev/tty)`)
-	fmt.Println(`      local cpt_status=$?`)
-	fmt.Println(`      if [[ $cpt_status -eq 42 ]]; then`)
+	fmt.Println(`      cpt_status=$?`)
+	fmt.Println(`      if [[ $cpt_status -eq 42 ]] && [[ -n "$cmd" ]]; then`)
 	fmt.Println(`          BUFFER="$cmd"`)
+	fmt.Println(`          CURSOR=${#BUFFER}`)
 	fmt.Println(`          zle accept-line`)
 	fmt.Println(`      elif [[ $cpt_status -eq 0 ]] && [[ -n "$cmd" ]]; then`)
 	fmt.Println(`          BUFFER="$cmd"`)
-	fmt.Println(`          CURSOR=$#BUFFER`)
-	fmt.Println(`          zle redisplay`)
+	fmt.Println(`          CURSOR=${#BUFFER}`)
+	fmt.Println(`          zle reset-prompt`)
 	fmt.Println(`      fi`)
 	fmt.Println(`  }`)
 	fmt.Println(`  zle -N cpt-widget`)

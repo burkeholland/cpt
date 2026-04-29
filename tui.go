@@ -137,6 +137,7 @@ func parseResponse(raw string) ParsedResponse {
 				resp.Explanation = strings.TrimSpace(strings.TrimPrefix(trimmed, "EXPLANATION:"))
 			} else if strings.HasPrefix(trimmed, "COMMAND:") {
 				cmd := strings.TrimSpace(strings.TrimPrefix(trimmed, "COMMAND:"))
+				cmd = stripInlineBackticks(cmd)
 				if cmd != "" {
 					resp.Candidates = append(resp.Candidates, CommandCandidate{Command: cmd})
 				}
@@ -183,6 +184,7 @@ func parseResponse(raw string) ParsedResponse {
 		if strings.HasPrefix(trimmed, "$ ") {
 			trimmed = strings.TrimPrefix(trimmed, "$ ")
 		}
+		trimmed = stripInlineBackticks(trimmed)
 
 		resp.Candidates = append(resp.Candidates, CommandCandidate{Command: trimmed})
 	}
@@ -222,6 +224,14 @@ func isProseOrMarkdown(s string) bool {
 		return true
 	}
 	return false
+}
+
+// stripInlineBackticks removes surrounding backticks from a command string.
+func stripInlineBackticks(s string) string {
+	if len(s) >= 2 && s[0] == '`' && s[len(s)-1] == '`' {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 // isDestructiveCommand checks if a command looks dangerous enough to require confirmation before running.
