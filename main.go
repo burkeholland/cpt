@@ -127,7 +127,21 @@ func detectShell() string {
 		}
 		return "zsh" // default on Unix
 	}
-	// On Windows, default to PowerShell
+	// On Windows, check for Git Bash/MSYS2/Cygwin environments
+	if shell := os.Getenv("SHELL"); shell != "" {
+		base := filepath.Base(shell)
+		switch base {
+		case "bash", "bash.exe":
+			return "bash"
+		case "zsh", "zsh.exe":
+			return "zsh"
+		case "fish", "fish.exe":
+			return "fish"
+		}
+	}
+	if os.Getenv("MSYSTEM") != "" || os.Getenv("MINGW_PREFIX") != "" {
+		return "bash"
+	}
 	return "powershell"
 }
 
@@ -238,10 +252,13 @@ bind \ck cpt-widget
 # cpt - terminal copilot (Ctrl+K)
 if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
     function Invoke-Cpt {
-        $result = & %s
+        $result = (& %s) -join [Environment]::NewLine
         $exitCode = $LASTEXITCODE
-        if ($result) {
-            [Microsoft.PowerShell.PSConsoleReadLine]::Insert($result)
+        if ($result.Length -gt 0) {
+            $line = $null
+            $cursor = $null
+            [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+            [Microsoft.PowerShell.PSConsoleReadLine]::Replace(0, $line.Length, $result)
             if ($exitCode -eq 42) {
                 [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
             }
@@ -318,7 +335,10 @@ func printSetup() {
 	fmt.Println(`      local cmd status`)
 	fmt.Println(`      cmd=$(cpt 2>/dev/tty)`)
 	fmt.Println(`      status=$?`)
-	fmt.Println(`      if [ "$status" -eq 0 ] && [ -n "$cmd" ]; then`)
+	fmt.Println(`      if [ "$status" -eq 42 ]; then`)
+	fmt.Println(`          READLINE_LINE="$cmd"`)
+	fmt.Println(`          READLINE_POINT=${#cmd}`)
+	fmt.Println(`      elif [ "$status" -eq 0 ] && [ -n "$cmd" ]; then`)
 	fmt.Println(`          READLINE_LINE="$cmd"`)
 	fmt.Println(`          READLINE_POINT=${#cmd}`)
 	fmt.Println(`      fi`)
@@ -341,10 +361,12 @@ func printSetup() {
 	fmt.Println()
 	fmt.Println("  # PowerShell ($PROFILE)")
 	fmt.Println(`  function Invoke-Cpt {`)
-	fmt.Println(`      $result = & cpt`)
+	fmt.Println(`      $result = (& cpt) -join [Environment]::NewLine`)
 	fmt.Println(`      $exitCode = $LASTEXITCODE`)
-	fmt.Println(`      if ($result) {`)
-	fmt.Println(`          [Microsoft.PowerShell.PSConsoleReadLine]::Insert($result)`)
+	fmt.Println(`      if ($result.Length -gt 0) {`)
+	fmt.Println(`          $line = $null; $cursor = $null`)
+	fmt.Println(`          [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)`)
+	fmt.Println(`          [Microsoft.PowerShell.PSConsoleReadLine]::Replace(0, $line.Length, $result)`)
 	fmt.Println(`          if ($exitCode -eq 42) { [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine() }`)
 	fmt.Println(`      }`)
 	fmt.Println(`  }`)

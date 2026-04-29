@@ -228,6 +228,7 @@ func isProseOrMarkdown(s string) bool {
 func isDestructiveCommand(cmd string) bool {
 	lower := strings.ToLower(cmd)
 	patterns := []string{
+		// POSIX
 		"rm -rf", "rm -r ", "rm -fr",
 		"sudo ",
 		"chmod -r", "chown -r",
@@ -238,6 +239,11 @@ func isDestructiveCommand(cmd string) bool {
 		"docker system prune",
 		"kubectl delete",
 		":(){", "fork bomb",
+		// Windows / PowerShell
+		"remove-item", "del /s", "rd /s",
+		"format-volume", "clear-disk", "remove-partition",
+		"stop-computer", "restart-computer",
+		"stop-process -force",
 	}
 	for _, p := range patterns {
 		if strings.Contains(lower, p) {

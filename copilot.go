@@ -157,9 +157,10 @@ func (c *copilotClient) ensureSession(ctx context.Context, modelName, shell stri
 				updates <- streamUpdate{delta: d.DeltaContent}
 			}
 		case *copilot.SessionIdleData:
-			// Clear done to prevent double-close, then signal completion
+			// Clear both channels to prevent stale sends
 			c.streamMu.Lock()
 			c.currentDone = nil
+			c.currentUpdates = nil
 			c.streamMu.Unlock()
 			if done != nil {
 				close(done)
