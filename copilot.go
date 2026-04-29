@@ -9,19 +9,23 @@ import (
 	copilot "github.com/github/copilot-sdk/go"
 )
 
-const systemPromptTemplate = `You translate natural language into shell commands. Output rules:
-1. Print one command per line — nothing else
-2. No prose, no explanations, no markdown, no code fences, no bullet points, no numbering
-3. If there are multiple alternative ways, list the best 2-3 as separate lines
-4. Each line must be a valid, copy-pasteable shell command
-5. Target shell: %s on %s
+const systemPromptTemplate = `You translate natural language into shell commands.
+
+Output format — follow this exactly:
+1. First, print one short explanation line starting with "EXPLANATION:" (max ~15 words)
+2. Then print one or more command lines, each starting with "COMMAND:"
+3. If there are multiple alternative ways, list the best 2-3 as separate COMMAND: lines
+4. Each command must be a valid, copy-pasteable shell command for %s on %s
+5. No other output — no markdown, no code fences, no numbering, no extra prose
 
 Example input:  "kill process on port 3000"
 Example output (bash/zsh):
-lsof -ti:3000 | xargs kill -9
-fuser -k 3000/tcp
+EXPLANATION: Kill any process listening on port 3000
+COMMAND: lsof -ti:3000 | xargs kill -9
+COMMAND: fuser -k 3000/tcp
 Example output (PowerShell):
-Stop-Process -Id (Get-NetTCPConnection -LocalPort 3000).OwningProcess -Force`
+EXPLANATION: Terminate the process using port 3000
+COMMAND: Stop-Process -Id (Get-NetTCPConnection -LocalPort 3000).OwningProcess -Force`
 
 func systemPrompt(shell string) string {
 	return fmt.Sprintf(systemPromptTemplate, shell, runtime.GOOS)
@@ -32,6 +36,16 @@ type copilotClient struct {
 	models  []string
 	mu      sync.Mutex
 	started bool
+
+	// Session reuse — kept alive across refinements
+	session      *copilot.Session
+	sessionModel string
+	sessionShell string
+
+	// Stream routing (protected by streamMu)
+	streamMu       sync.Mutex
+	currentUpdates chan<- streamUpdate
+	currentDone    chan struct{}
 }
 
 func newCopilotClient() *copilotClient {
@@ -57,9 +71,23 @@ func (c *copilotClient) start(ctx context.Context) error {
 func (c *copilotClient) stop() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.session != nil {
+		c.session.Disconnect()
+		c.session = nil
+	}
 	if c.client != nil && c.started {
 		c.client.Stop()
 		c.started = false
+	}
+}
+
+// resetSession disconnects the current session so the next ask() creates a fresh one.
+func (c *copilotClient) resetSession() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.session != nil {
+		c.session.Disconnect()
+		c.session = nil
 	}
 }
 
@@ -85,12 +113,17 @@ type streamUpdate struct {
 	err   error
 }
 
-func (c *copilotClient) ask(ctx context.Context, prompt, modelName, shell string, updates chan<- streamUpdate) {
-	defer close(updates)
+// ensureSession creates a session if one doesn't exist or if the model/shell changed.
+// Must be called with c.mu held.
+func (c *copilotClient) ensureSession(ctx context.Context, modelName, shell string) error {
+	if c.session != nil && c.sessionModel == modelName && c.sessionShell == shell {
+		return nil
+	}
 
-	if err := c.start(ctx); err != nil {
-		updates <- streamUpdate{err: err}
-		return
+	// Disconnect stale session
+	if c.session != nil {
+		c.session.Disconnect()
+		c.session = nil
 	}
 
 	session, err := c.client.CreateSession(ctx, &copilot.SessionConfig{
@@ -103,23 +136,67 @@ func (c *copilotClient) ask(ctx context.Context, prompt, modelName, shell string
 		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
 	})
 	if err != nil {
-		updates <- streamUpdate{err: fmt.Errorf("failed to create session: %w", err)}
-		return
+		return fmt.Errorf("failed to create session: %w", err)
 	}
-	defer session.Disconnect()
 
-	done := make(chan struct{})
+	c.session = session
+	c.sessionModel = modelName
+	c.sessionShell = shell
 
+	// Attach event handler once for this session's lifetime.
+	// It routes events to whatever stream channel is currently active.
 	session.On(func(event copilot.SessionEvent) {
+		c.streamMu.Lock()
+		updates := c.currentUpdates
+		done := c.currentDone
+		c.streamMu.Unlock()
+
 		switch d := event.Data.(type) {
 		case *copilot.AssistantMessageDeltaData:
-			updates <- streamUpdate{delta: d.DeltaContent}
+			if updates != nil {
+				updates <- streamUpdate{delta: d.DeltaContent}
+			}
 		case *copilot.SessionIdleData:
-			close(done)
+			// Clear both channels to prevent stale sends
+			c.streamMu.Lock()
+			c.currentDone = nil
+			c.currentUpdates = nil
+			c.streamMu.Unlock()
+			if done != nil {
+				close(done)
+			}
 		}
 	})
 
-	_, err = session.Send(ctx, copilot.MessageOptions{
+	return nil
+}
+
+func (c *copilotClient) ask(ctx context.Context, prompt, modelName, shell string, updates chan<- streamUpdate) {
+	defer close(updates)
+
+	if err := c.start(ctx); err != nil {
+		updates <- streamUpdate{err: err}
+		return
+	}
+
+	c.mu.Lock()
+	if err := c.ensureSession(ctx, modelName, shell); err != nil {
+		c.mu.Unlock()
+		updates <- streamUpdate{err: err}
+		return
+	}
+
+	done := make(chan struct{})
+
+	c.streamMu.Lock()
+	c.currentUpdates = updates
+	c.currentDone = done
+	c.streamMu.Unlock()
+
+	session := c.session
+	c.mu.Unlock()
+
+	_, err := session.Send(ctx, copilot.MessageOptions{
 		Prompt: prompt,
 	})
 	if err != nil {
