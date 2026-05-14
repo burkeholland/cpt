@@ -387,6 +387,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.exitAction = actionRun
 				m.copilot.stop()
 				return m, tea.Quit
+			case "ctrl+y":
+				m.exitAction = actionCopy
+				m.copilot.stop()
+				return m, tea.Quit
 			case "ctrl+c", "esc":
 				m.copilot.stop()
 				return m, tea.Quit
@@ -546,9 +550,9 @@ func (m model) View() string {
 			}
 		} else {
 			if len(m.candidates) > 1 {
-				hints = "enter accept • ctrl+r run • ↑↓ alternatives • type to refine • esc quit"
+				hints = "enter accept • ctrl+r run • ctrl+y copy • ↑↓ alternatives • type to refine • esc quit"
 			} else {
-				hints = "enter accept • ctrl+r run • type to refine • esc quit"
+				hints = "enter accept • ctrl+r run • ctrl+y copy • type to refine • esc quit"
 			}
 		}
 		content += helpStyle.Render(hints)
