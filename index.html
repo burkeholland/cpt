@@ -102,6 +102,17 @@
       line-height: 1.5;
       font-weight: 400;
     }
+    .release-note {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      background: rgba(14,165,233,0.08);
+      border: 1px solid rgba(14,165,233,0.18);
+      border-radius: 999px;
+      padding: 0.32rem 0.7rem;
+      width: fit-content;
+    }
+    .release-note strong { color: var(--azure); font-weight: 700; }
 
     /* ── INSTALL ── */
     .install-block {
@@ -275,6 +286,8 @@
     <p class="tagline">Add Copilot chat to any terminal.</p>
     <p style="margin:10px 0 0;"><img src="https://img.shields.io/badge/-Built%20with%20Copilot-0b0f14?style=flat&logo=githubcopilot&logoColor=ffffff" alt="Built with Copilot" style="height:20px;"></p>
   </div>
+
+  <div class="release-note"><strong>v0.4.2</strong> fixes Windows PowerShell startup with the latest Copilot runtime.</div>
 
   <div class="install-block">
     <div class="install-tabs">
