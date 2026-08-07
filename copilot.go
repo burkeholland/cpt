@@ -128,7 +128,7 @@ func (c *copilotClient) ensureSession(ctx context.Context, modelName, shell stri
 
 	session, err := c.client.CreateSession(ctx, &copilot.SessionConfig{
 		Model:     modelName,
-		Streaming: true,
+		Streaming: copilot.Bool(true),
 		SystemMessage: &copilot.SystemMessageConfig{
 			Mode:    "replace",
 			Content: systemPrompt(shell),

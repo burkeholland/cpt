@@ -20,6 +20,10 @@ irm https://raw.githubusercontent.com/burkeholland/cpt/main/install.ps1 | iex
 
 The installer downloads the binary, adds it to your PATH, and registers the **Ctrl+K** keybinding in your shell. Restart your terminal to activate.
 
+### Latest release
+
+**v0.4.2** fixes Windows PowerShell startup with the latest Copilot runtime response format.
+
 ### Alternative: install with Go
 
 ```sh
