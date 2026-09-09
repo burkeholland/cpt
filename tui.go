@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
 )
 
 type viewState int
@@ -31,6 +34,11 @@ const (
 
 const exitCodeRun = 42
 
+const (
+	defaultModel  = "gpt-5.6-luna"
+	modelCacheTTL = 24 * time.Hour
+)
+
 // CommandCandidate represents a single command alternative extracted from the AI response.
 type CommandCandidate struct {
 	Command string
@@ -53,33 +61,37 @@ type streamDeltaMsg struct {
 	updates <-chan streamUpdate
 }
 
-type streamDoneMsg struct{}
+type streamDoneMsg struct{ final string }
 type streamErrMsg struct{ err error }
 
 type model struct {
-	state       viewState
-	textInput   textinput.Model
-	refineInput textinput.Model
-	spinner     spinner.Model
-	copilot     *copilotClient
-	models      []string
-	modelIndex  int
-	candidates  []CommandCandidate
-	selectedIdx int
-	explanation string
-	streaming   string
-	err         error
-	exitAction  exitActionType
-	prompt      string
-	shell       string
-	bare        bool
-	width       int
-	height      int
+	state          viewState
+	textInput      textinput.Model
+	refineInput    textinput.Model
+	spinner        spinner.Model
+	copilot        *copilotClient
+	models         []string
+	modelIndex     int
+	modelsReady    bool
+	refreshModels  bool
+	preferredModel string
+	candidates     []CommandCandidate
+	selectedIdx    int
+	explanation    string
+	streaming      string
+	err            error
+	modelWarning   string
+	exitAction     exitActionType
+	prompt         string
+	shell          string
+	bare           bool
+	width          int
+	height         int
 }
 
 func newModel(inlinePrompt string, bare bool) model {
 	ti := textinput.New()
-	ti.Placeholder = "Ask anything... (e.g., kill process on port 3000)"
+	ti.Placeholder = "Describe the command you need..."
 	ti.Focus()
 	ti.CharLimit = 500
 	ti.Width = 60
@@ -93,16 +105,35 @@ func newModel(inlinePrompt string, bare bool) model {
 	s.Spinner = spinner.Dot
 	s.Style = spinnerStyle
 
-	return model{
-		state:       stateInput,
-		textInput:   ti,
-		refineInput: ri,
-		spinner:     s,
-		copilot:     newCopilotClient(),
-		prompt:      inlinePrompt,
-		shell:       detectShell(),
-		bare:        bare,
+	m := model{
+		state:          stateInput,
+		textInput:      ti,
+		refineInput:    ri,
+		spinner:        s,
+		copilot:        newCopilotClient(),
+		prompt:         inlinePrompt,
+		shell:          detectShell(),
+		bare:           bare,
+		preferredModel: defaultModel,
 	}
+	if cfg, err := loadConfig(); err == nil {
+		m.models = cfg.Models
+		m.modelsReady = len(cfg.Models) > 0
+		m.refreshModels = !modelCacheFresh(cfg.ModelsUpdatedAt, time.Now())
+		if cfg.LastModel != "" {
+			m.preferredModel = cfg.LastModel
+		}
+		for i, name := range m.models {
+			if name == m.preferredModel {
+				m.modelIndex = i
+				break
+			}
+		}
+	}
+	if inlinePrompt != "" {
+		m.state = stateLoading
+	}
+	return m
 }
 
 // selectedCommand returns the currently selected command text.
@@ -111,6 +142,33 @@ func (m model) selectedCommand() string {
 		return ""
 	}
 	return m.candidates[m.selectedIdx].Command
+}
+
+func (m *model) saveSelectedModel() {
+	if len(m.models) == 0 {
+		return
+	}
+	m.preferredModel = m.models[m.modelIndex]
+	if err := updateConfig(func(cfg *config) {
+		cfg.LastModel = m.preferredModel
+	}); err != nil {
+		m.modelWarning = "Model selected, but the preference could not be saved"
+	}
+}
+
+func modelCacheFresh(updatedAt int64, now time.Time) bool {
+	if updatedAt <= 0 {
+		return false
+	}
+	updated := time.Unix(updatedAt, 0)
+	return !updated.After(now) && now.Sub(updated) < modelCacheTTL
+}
+
+func (m model) selectedModel() string {
+	if len(m.models) > 0 {
+		return m.models[m.modelIndex]
+	}
+	return m.preferredModel
 }
 
 // parseResponse extracts an explanation and runnable commands from the AI response.
@@ -134,7 +192,13 @@ func parseResponse(raw string) ParsedResponse {
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "EXPLANATION:") {
-				resp.Explanation = strings.TrimSpace(strings.TrimPrefix(trimmed, "EXPLANATION:"))
+				explanation := strings.TrimSpace(strings.TrimPrefix(trimmed, "EXPLANATION:"))
+				if explanation != "" {
+					if resp.Explanation != "" {
+						resp.Explanation += " "
+					}
+					resp.Explanation += explanation
+				}
 			} else if strings.HasPrefix(trimmed, "COMMAND:") {
 				cmd := strings.TrimSpace(strings.TrimPrefix(trimmed, "COMMAND:"))
 				cmd = stripInlineBackticks(cmd)
@@ -143,6 +207,7 @@ func parseResponse(raw string) ParsedResponse {
 				}
 			}
 		}
+		resp.Candidates = uniqueCandidates(resp.Candidates)
 		return resp
 	}
 
@@ -197,7 +262,25 @@ func parseResponse(raw string) ParsedResponse {
 		}
 	}
 
+	resp.Candidates = uniqueCandidates(resp.Candidates)
 	return resp
+}
+
+func uniqueCandidates(candidates []CommandCandidate) []CommandCandidate {
+	seen := make(map[string]struct{}, len(candidates))
+	unique := make([]CommandCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		command := strings.TrimSpace(candidate.Command)
+		if command == "" {
+			continue
+		}
+		if _, ok := seen[command]; ok {
+			continue
+		}
+		seen[command] = struct{}{}
+		unique = append(unique, CommandCandidate{Command: command})
+	}
+	return unique
 }
 
 func isProseOrMarkdown(s string) bool {
@@ -234,40 +317,81 @@ func stripInlineBackticks(s string) string {
 	return s
 }
 
-// isDestructiveCommand checks if a command looks dangerous enough to require confirmation before running.
-func isDestructiveCommand(cmd string) bool {
+type commandRisk struct {
+	dangerous bool
+	reason    string
+}
+
+// classifyCommand identifies commands that should never run without an explicit confirmation.
+func classifyCommand(cmd string) commandRisk {
 	lower := strings.ToLower(cmd)
-	patterns := []string{
+	patterns := []struct {
+		pattern string
+		reason  string
+	}{
 		// POSIX
-		"rm -rf", "rm -r ", "rm -fr",
-		"sudo ",
-		"chmod -r", "chown -r",
-		"kill -9", "killall",
-		"dd ",
-		"mkfs",
-		"> /dev/",
-		"docker system prune",
-		"kubectl delete",
-		":(){", "fork bomb",
+		{"rm -rf", "recursively deletes files"},
+		{"rm -r ", "recursively deletes files"},
+		{"rm -fr", "recursively deletes files"},
+		{"sudo ", "runs with elevated privileges"},
+		{"chmod -r", "recursively changes permissions"},
+		{"chown -r", "recursively changes ownership"},
+		{"kill -9", "forcefully terminates a process"},
+		{"killall", "terminates processes by name"},
+		{"dd ", "writes raw data to a device or file"},
+		{"mkfs", "formats a filesystem"},
+		{"> /dev/", "writes directly to a device"},
+		{"docker system prune", "removes Docker resources"},
+		{"kubectl delete", "deletes Kubernetes resources"},
+		{"git reset --hard", "discards uncommitted changes"},
+		{"git clean -f", "deletes untracked files"},
+		{"git push --force", "rewrites remote history"},
+		{"git push -f", "rewrites remote history"},
+		{"drop database", "deletes a database"},
+		{"drop table", "deletes a database table"},
+		{"truncate table", "removes all rows from a table"},
+		{"curl ", "downloads remote content"},
+		{"wget ", "downloads remote content"},
+		{":(){", "is a fork bomb"},
+		{"fork bomb", "is a fork bomb"},
 		// Windows / PowerShell
-		"remove-item", "del /s", "rd /s",
-		"format-volume", "clear-disk", "remove-partition",
-		"stop-computer", "restart-computer",
-		"stop-process -force",
+		{"remove-item", "deletes files or directories"},
+		{"del /s", "recursively deletes files"},
+		{"rd /s", "recursively deletes directories"},
+		{"format-volume", "formats a volume"},
+		{"clear-disk", "erases a disk"},
+		{"remove-partition", "deletes a disk partition"},
+		{"stop-computer", "shuts down the computer"},
+		{"restart-computer", "restarts the computer"},
+		{"stop-process -force", "forcefully terminates a process"},
 	}
-	for _, p := range patterns {
-		if strings.Contains(lower, p) {
-			return true
+	for _, candidate := range patterns {
+		if strings.Contains(lower, candidate.pattern) {
+			if (candidate.pattern == "curl " || candidate.pattern == "wget ") &&
+				!strings.Contains(lower, "| sh") &&
+				!strings.Contains(lower, "| bash") &&
+				!strings.Contains(lower, "| zsh") &&
+				!strings.Contains(lower, "iex") {
+				continue
+			}
+			return commandRisk{dangerous: true, reason: candidate.reason}
 		}
 	}
-	return false
+	return commandRisk{}
+}
+
+func isDestructiveCommand(cmd string) bool {
+	return classifyCommand(cmd).dangerous
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(
-		textinput.Blink,
-		m.loadModels(),
-	)
+	cmds := []tea.Cmd{textinput.Blink}
+	if m.state == stateLoading {
+		cmds = append(cmds, m.spinner.Tick, m.sendPrompt())
+	} else if !m.modelsReady || m.refreshModels {
+		cmds = append(cmds, m.loadModels())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) loadModels() tea.Cmd {
@@ -279,10 +403,7 @@ func (m model) loadModels() tea.Cmd {
 
 func (m model) sendPrompt() tea.Cmd {
 	prompt := m.prompt
-	modelName := ""
-	if len(m.models) > 0 {
-		modelName = m.models[m.modelIndex]
-	}
+	modelName := m.selectedModel()
 
 	updates := make(chan streamUpdate, 100)
 	go m.copilot.ask(context.Background(), prompt, modelName, m.shell, updates)
@@ -300,9 +421,30 @@ func listenForUpdates(updates <-chan streamUpdate) tea.Cmd {
 			return streamErrMsg{err: update.err}
 		}
 		if update.done {
-			return streamDoneMsg{}
+			return streamDoneMsg{final: update.final}
 		}
-		return streamDeltaMsg{delta: update.delta, updates: updates}
+
+		// Coalesce all deltas already waiting in the buffer so fast token bursts
+		// trigger one render instead of one full terminal redraw per token.
+		var delta strings.Builder
+		delta.WriteString(update.delta)
+		for {
+			select {
+			case next, ok := <-updates:
+				if !ok {
+					return streamDoneMsg{}
+				}
+				if next.err != nil {
+					return streamErrMsg{err: next.err}
+				}
+				if next.done {
+					return streamDoneMsg{final: next.final}
+				}
+				delta.WriteString(next.delta)
+			default:
+				return streamDeltaMsg{delta: delta.String(), updates: updates}
+			}
+		}
 	}
 }
 
@@ -316,6 +458,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if w := consoleWindowWidth(); w > 0 && w < m.width {
 			m.width = w
 		}
+		inputWidth := m.innerWidth()
+		m.textInput.Width = inputWidth
+		m.refineInput.Width = inputWidth
 		return m, nil
 
 	case tea.KeyMsg:
@@ -328,13 +473,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "tab":
 				if len(m.models) > 0 {
 					m.modelIndex = (m.modelIndex + 1) % len(m.models)
-					saveConfig(config{LastModel: m.models[m.modelIndex]})
+					m.saveSelectedModel()
 				}
 				return m, nil
 			case "shift+tab":
 				if len(m.models) > 0 {
 					m.modelIndex = (m.modelIndex - 1 + len(m.models)) % len(m.models)
-					saveConfig(config{LastModel: m.models[m.modelIndex]})
+					m.saveSelectedModel()
 				}
 				return m, nil
 			case "enter":
@@ -343,6 +488,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.prompt = input
+				m.err = nil
 				m.state = stateLoading
 				m.streaming = ""
 				return m, tea.Batch(m.spinner.Tick, m.sendPrompt())
@@ -359,9 +505,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedIdx = (m.selectedIdx - 1 + len(m.candidates)) % len(m.candidates)
 				}
 				return m, nil
-			case "down":
+			case "down", "tab":
 				if len(m.candidates) > 1 {
 					m.selectedIdx = (m.selectedIdx + 1) % len(m.candidates)
+				}
+				return m, nil
+			case "shift+tab":
+				if len(m.candidates) > 1 {
+					m.selectedIdx = (m.selectedIdx - 1 + len(m.candidates)) % len(m.candidates)
 				}
 				return m, nil
 			case "enter":
@@ -370,6 +521,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Iterate: send the new prompt
 					m.prompt = refineText
 					m.refineInput.Reset()
+					m.err = nil
 					m.state = stateLoading
 					m.streaming = ""
 					return m, tea.Batch(m.spinner.Tick, m.sendPrompt())
@@ -387,6 +539,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.exitAction = actionRun
 				m.copilot.stop()
 				return m, tea.Quit
+			case "ctrl+y":
+				m.exitAction = actionCopy
+				m.copilot.stop()
+				return m, tea.Quit
+			case "ctrl+e":
+				m.textInput.SetValue(m.prompt)
+				m.textInput.CursorEnd()
+				m.refineInput.Blur()
+				m.textInput.Focus()
+				m.state = stateInput
+				return m, textinput.Blink
 			case "ctrl+c", "esc":
 				m.copilot.stop()
 				return m, tea.Quit
@@ -402,35 +565,52 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case stateError:
-			if msg.String() == "ctrl+c" || msg.String() == "esc" || msg.String() == "q" || msg.String() == "enter" {
+			switch msg.String() {
+			case "r", "enter":
+				m.err = nil
+				m.streaming = ""
+				if strings.TrimSpace(m.prompt) == "" {
+					m.state = stateInput
+					m.textInput.Focus()
+					return m, textinput.Blink
+				}
+				m.state = stateLoading
+				return m, tea.Batch(m.spinner.Tick, m.sendPrompt())
+			case "ctrl+c", "esc", "q":
 				m.copilot.stop()
 				return m, tea.Quit
 			}
 		}
 
 	case modelsLoadedMsg:
+		m.modelsReady = true
+		m.refreshModels = false
 		if msg.err != nil {
-			m.err = msg.err
-			m.state = stateError
+			m.modelWarning = "Model list unavailable; using Copilot's default model"
 			return m, nil
 		}
+		m.modelWarning = ""
 		m.models = msg.models
 		if len(m.models) > 0 {
 			m.modelIndex = 0
 			// Restore last-used model
-			cfg := loadConfig()
-			if cfg.LastModel != "" {
+			if m.preferredModel != "" {
 				for i, name := range m.models {
-					if name == cfg.LastModel {
+					if name == m.preferredModel {
 						m.modelIndex = i
 						break
 					}
 				}
 			}
-		}
-		if m.prompt != "" && m.state == stateInput {
-			m.state = stateLoading
-			return m, tea.Batch(m.spinner.Tick, m.sendPrompt())
+			if err := updateConfig(func(cfg *config) {
+				cfg.Models = append([]string(nil), m.models...)
+				cfg.ModelsUpdatedAt = time.Now().Unix()
+				if cfg.LastModel == "" {
+					cfg.LastModel = m.preferredModel
+				}
+			}); err != nil {
+				m.modelWarning = "Models loaded, but the local cache could not be saved"
+			}
 		}
 		return m, nil
 
@@ -439,12 +619,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenForUpdates(msg.updates)
 
 	case streamDoneMsg:
-		raw := strings.TrimSpace(m.streaming)
+		raw := strings.TrimSpace(msg.final)
+		if raw == "" {
+			raw = strings.TrimSpace(m.streaming)
+		}
+		if raw == "" {
+			m.err = errors.New("Copilot returned an empty response")
+			m.state = stateError
+			return m, nil
+		}
 		parsed := parseResponse(raw)
 		m.explanation = parsed.Explanation
 		m.candidates = parsed.Candidates
 		if len(m.candidates) == 0 {
-			m.candidates = []CommandCandidate{{Command: raw}}
+			m.err = errors.New("Copilot did not return a runnable command")
+			m.state = stateError
+			return m, nil
 		}
 		m.selectedIdx = 0
 		m.state = stateResult
@@ -479,59 +669,137 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) panelWidth() int {
+	if m.width <= 0 {
+		return 64
+	}
+	// Lip Gloss adds two columns of padding and two border columns outside
+	// the configured width.
+	width := m.width - 4
+	if width > 80 {
+		return 80
+	}
+	if width < 1 {
+		return 1
+	}
+	return width
+}
+
+func (m model) innerWidth() int {
+	return m.panelWidth()
+}
+
+func wrapText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+
+	var wrapped []string
+	for _, sourceLine := range strings.Split(text, "\n") {
+		if sourceLine == "" {
+			wrapped = append(wrapped, "")
+			continue
+		}
+
+		var line strings.Builder
+		lineWidth := 0
+		for _, r := range sourceLine {
+			runeWidth := runewidth.RuneWidth(r)
+			if lineWidth > 0 && lineWidth+runeWidth > width {
+				wrapped = append(wrapped, line.String())
+				line.Reset()
+				lineWidth = 0
+			}
+			line.WriteRune(r)
+			lineWidth += runeWidth
+		}
+		wrapped = append(wrapped, line.String())
+	}
+	return strings.Join(wrapped, "\n")
+}
+
+func renderCommand(command string, width int, selected bool) string {
+	prefix := "  "
+	style := unselectedCmdStyle
+	if selected {
+		prefix = "▸ "
+		style = selectedCmdStyle
+	}
+
+	available := width - runewidth.StringWidth(prefix)
+	if available < 1 {
+		available = 1
+	}
+	lines := strings.Split(wrapText(command, available), "\n")
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = prefix + line
+		} else {
+			lines[i] = "  " + line
+		}
+	}
+	return style.Render(strings.Join(lines, "\n"))
+}
+
+func renderStreaming(raw string, width int) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+
+	var rendered []string
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "EXPLANATION:"):
+			explanation := strings.TrimSpace(strings.TrimPrefix(trimmed, "EXPLANATION:"))
+			rendered = append(rendered, helpStyle.Render(wrapText(explanation, width)))
+		case strings.HasPrefix(trimmed, "COMMAND:"):
+			command := strings.TrimSpace(strings.TrimPrefix(trimmed, "COMMAND:"))
+			rendered = append(rendered, renderCommand(command, width, true))
+		case trimmed != "":
+			rendered = append(rendered, wrapText(trimmed, width))
+		}
+	}
+	return strings.Join(rendered, "\n")
+}
+
 func (m model) View() string {
 	var content string
 
-	// Inner width accounts for border (2) and padding (2)
-	innerWidth := m.width - 4
-	if innerWidth <= 0 {
-		innerWidth = 60
-	}
+	innerWidth := m.innerWidth()
 
 	switch m.state {
 	case stateInput:
 		modelTag := helpStyle.Render("…")
-		if len(m.models) > 0 {
-			modelTag = modelTagStyle.Render(m.models[m.modelIndex])
+		if modelName := m.selectedModel(); modelName != "" {
+			modelTag = modelTagStyle.Render(modelName)
+			if reasoningEffort(modelName) == "none" {
+				modelTag += " " + helpStyle.Render("· no reasoning")
+			}
 		}
 		content = titleStyle.Render("✦ cpt") + " " + modelTag + " " + helpStyle.Render("tab↹ model") + "\n" +
 			m.textInput.View()
+		if m.modelWarning != "" {
+			content += "\n" + warningStyle.Render(wrapText(m.modelWarning, innerWidth))
+		}
 
 	case stateLoading:
-		preview := m.streaming
+		preview := renderStreaming(m.streaming, innerWidth)
 		if preview == "" {
 			preview = m.spinner.View() + " Thinking..."
-		} else {
-			// Strip EXPLANATION:/COMMAND: prefixes during streaming for cleaner display
-			var cleaned []string
-			for _, line := range strings.Split(preview, "\n") {
-				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "EXPLANATION:") {
-					cleaned = append(cleaned, helpStyle.Render(strings.TrimSpace(strings.TrimPrefix(trimmed, "EXPLANATION:"))))
-				} else if strings.HasPrefix(trimmed, "COMMAND:") {
-					cleaned = append(cleaned, selectedCmdStyle.Render("▸ "+strings.TrimSpace(strings.TrimPrefix(trimmed, "COMMAND:"))))
-				} else if trimmed != "" {
-					cleaned = append(cleaned, trimmed)
-				}
-			}
-			if len(cleaned) > 0 {
-				preview = strings.Join(cleaned, "\n")
-			}
 		}
-		header := titleStyle.Render("✦ cpt") + " " + promptStyle.Render(m.prompt)
-		content = renderer.NewStyle().MaxWidth(innerWidth).Render(header) + "\n" +
-			preview
+		header := titleStyle.Render("✦ cpt") + " " + promptStyle.Render(wrapText(m.prompt, innerWidth-6))
+		content = header + "\n" + preview
+		if m.modelWarning != "" {
+			content += "\n" + warningStyle.Render(wrapText(m.modelWarning, innerWidth))
+		}
 
 	case stateResult:
 		if m.explanation != "" {
-			content += helpStyle.Render(m.explanation) + "\n"
+			content += helpStyle.Render(wrapText(m.explanation, innerWidth)) + "\n"
 		}
 		for i, c := range m.candidates {
-			if i == m.selectedIdx {
-				content += selectedCmdStyle.Render("▸ " + c.Command)
-			} else {
-				content += unselectedCmdStyle.Render("  " + c.Command)
-			}
+			content += renderCommand(c.Command, innerWidth, i == m.selectedIdx)
 			if i < len(m.candidates)-1 {
 				content += "\n"
 			}
@@ -540,28 +808,29 @@ func (m model) View() string {
 		var hints string
 		if m.bare {
 			if len(m.candidates) > 1 {
-				hints = "enter copy • ↑↓ alternatives • type to refine • esc quit"
+				hints = "enter copy • ↑↓ choose • type refine • ctrl+e edit • esc quit"
 			} else {
-				hints = "enter copy • type to refine • esc quit"
+				hints = "enter copy • type refine • ctrl+e edit • esc quit"
 			}
 		} else {
 			if len(m.candidates) > 1 {
-				hints = "enter accept • ctrl+r run • ↑↓ alternatives • type to refine • esc quit"
+				hints = "enter accept • ctrl+r run • ctrl+y copy • ↑↓ choose • type refine"
 			} else {
-				hints = "enter accept • ctrl+r run • type to refine • esc quit"
+				hints = "enter accept • ctrl+r run • ctrl+y copy • type refine • esc quit"
 			}
 		}
-		content += helpStyle.Render(hints)
+		content += helpStyle.Render(wrapText(hints, innerWidth))
 
 	case stateConfirmRun:
-		content = errorStyle.Render("⚠ This command looks destructive:") + "\n" +
-			selectedCmdStyle.Render("▸ "+m.selectedCommand()) + "\n\n" +
+		risk := classifyCommand(m.selectedCommand())
+		content = warningStyle.Render("⚠ Confirmation required — "+risk.reason) + "\n" +
+			renderCommand(m.selectedCommand(), innerWidth, true) + "\n\n" +
 			helpStyle.Render("Run it? (y/n)")
 
 	case stateError:
 		errMsg := m.err.Error()
 		content = titleStyle.Render("✦ cpt") + "\n\n" +
-			errorStyle.MaxWidth(innerWidth).Render("Error: "+errMsg) + "\n\n"
+			errorStyle.Render(wrapText("Error: "+errMsg, innerWidth)) + "\n\n"
 		// Provide actionable guidance based on common failure modes
 		if strings.Contains(errMsg, "copilot") || strings.Contains(errMsg, "start") || strings.Contains(errMsg, "token") || strings.Contains(errMsg, "auth") {
 			content += errorHintStyle.Render("Make sure GitHub Copilot CLI is installed and you're logged in:") + "\n" +
@@ -571,15 +840,13 @@ func (m model) View() string {
 			content += errorHintStyle.Render("Something went wrong. Check your network connection") + "\n" +
 				errorHintStyle.Render("and ensure GitHub Copilot is available.") + "\n"
 		}
-		content += "\n" + helpStyle.Render("press any key to exit")
+		content += "\n" + helpStyle.Render("enter retry • esc quit")
 	}
 
 	style := panelStyle
 	if m.state == stateError {
 		style = style.BorderForeground(coral)
 	}
-	// Always use a fixed panel width so all frames are the same size.
-	// This prevents ghost characters from previous wider frames on Windows.
-	style = style.Width(62)
+	style = style.Width(m.panelWidth())
 	return style.Render(content) + "\n"
 }

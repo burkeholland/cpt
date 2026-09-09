@@ -9,18 +9,18 @@ import (
 )
 
 var (
-	kernel32                     = syscall.NewLazyDLL("kernel32.dll")
-	procSetConsoleOutputCP       = kernel32.NewProc("SetConsoleOutputCP")
-	procSetConsoleCP             = kernel32.NewProc("SetConsoleCP")
-	procGetConsoleMode           = kernel32.NewProc("GetConsoleMode")
-	procSetConsoleMode           = kernel32.NewProc("SetConsoleMode")
-	procGetStdHandle             = kernel32.NewProc("GetStdHandle")
+	kernel32                       = syscall.NewLazyDLL("kernel32.dll")
+	procSetConsoleOutputCP         = kernel32.NewProc("SetConsoleOutputCP")
+	procSetConsoleCP               = kernel32.NewProc("SetConsoleCP")
+	procGetConsoleMode             = kernel32.NewProc("GetConsoleMode")
+	procSetConsoleMode             = kernel32.NewProc("SetConsoleMode")
+	procGetStdHandle               = kernel32.NewProc("GetStdHandle")
 	procGetConsoleScreenBufferInfo = kernel32.NewProc("GetConsoleScreenBufferInfo")
 )
 
 const (
-	cpUTF8                        = 65001
-	stdOutputHandle               = ^uintptr(0) - 11 + 1 // STD_OUTPUT_HANDLE = -11
+	cpUTF8                          = 65001
+	stdOutputHandle                 = ^uintptr(0) - 11 + 1 // STD_OUTPUT_HANDLE = -11
 	enableVirtualTerminalProcessing = 0x0004
 )
 
