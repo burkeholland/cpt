@@ -33,7 +33,6 @@ func systemPrompt(shell string) string {
 
 type copilotClient struct {
 	client  *copilot.Client
-	models  []string
 	mu      sync.Mutex
 	started bool
 
@@ -81,16 +80,6 @@ func (c *copilotClient) stop() {
 	}
 }
 
-// resetSession disconnects the current session so the next ask() creates a fresh one.
-func (c *copilotClient) resetSession() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.session != nil {
-		c.session.Disconnect()
-		c.session = nil
-	}
-}
-
 func (c *copilotClient) listModels(ctx context.Context) ([]string, error) {
 	if err := c.start(ctx); err != nil {
 		return nil, err
@@ -103,7 +92,6 @@ func (c *copilotClient) listModels(ctx context.Context) ([]string, error) {
 	for _, m := range models {
 		names = append(names, m.ID)
 	}
-	c.models = names
 	return names, nil
 }
 
