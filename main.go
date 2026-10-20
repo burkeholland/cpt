@@ -9,9 +9,15 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var version = "dev"
+
+const (
+	widgetStartMarker = "# >>> cpt terminal copilot >>>"
+	widgetEndMarker   = "# <<< cpt terminal copilot <<<"
+)
 
 // isStdoutPiped returns true when stdout is a pipe (inside shell widget),
 // false when stdout is a TTY (running cpt directly).
@@ -24,13 +30,14 @@ func isStdoutPiped() bool {
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "--version" {
-		fmt.Println("cpt " + version)
-		return
-	}
-
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "--version", "-v":
+			fmt.Println("cpt " + version)
+			return
+		case "--help", "-h":
+			printHelp()
+			return
 		case "--setup":
 			printSetup()
 			return
@@ -62,11 +69,16 @@ func main() {
 	}
 
 	// Clear the inline TUI from the terminal so it disappears on dismiss
-	fm := finalModel.(model)
+	fm, ok := finalModel.(model)
+	if !ok {
+		fmt.Fprintln(os.Stderr, "Error: unexpected terminal state")
+		os.Exit(1)
+	}
 	lastView := fm.View()
-	lineCount := strings.Count(lastView, "\n")
+	lineCount := lipgloss.Height(strings.TrimSuffix(lastView, "\n"))
 	if lineCount > 0 {
-		// Move cursor up and clear each line the TUI occupied
+		// Bubble Tea leaves the cursor below the inline renderer. Move back
+		// through every visual row, including rows created by command wrapping.
 		for i := 0; i < lineCount; i++ {
 			fmt.Fprintf(ttyOut, "\033[A\033[2K")
 		}
@@ -196,44 +208,15 @@ func installWidget() {
 	}
 	binPath, _ = filepath.EvalSymlinks(binPath)
 
-	// Remove existing widget if present (upgrade)
-	existing, _ := os.ReadFile(rcPath)
-	existingContent := string(existing)
-	if strings.Contains(existingContent, "cpt-widget") || strings.Contains(existingContent, "cpt-readline") || strings.Contains(existingContent, "Invoke-Cpt") {
-		// Remove old widget block between marker comments or the known patterns
-		lines := strings.Split(existingContent, "\n")
-		var cleaned []string
-		inWidget := false
-		for _, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			// Detect start of cpt widget block
-			if strings.Contains(trimmed, "# cpt - terminal copilot") ||
-				strings.Contains(trimmed, "cpt-widget()") ||
-				strings.Contains(trimmed, "function cpt-widget") ||
-				strings.Contains(trimmed, "function Invoke-Cpt") ||
-				strings.Contains(trimmed, "cpt-readline") {
-				inWidget = true
-				continue
-			}
-			if inWidget {
-				// End of widget: bindkey line or Set-PSReadLineKeyHandler
-				if strings.Contains(trimmed, "bindkey") && strings.Contains(trimmed, "cpt-widget") ||
-					strings.Contains(trimmed, "Set-PSReadLineKeyHandler") ||
-					strings.Contains(trimmed, "bind \\ck cpt-widget") {
-					inWidget = false
-					continue
-				}
-				// Skip widget body lines
-				continue
-			}
-			cleaned = append(cleaned, line)
-		}
-		// Trim trailing empty lines from cleanup
-		for len(cleaned) > 0 && strings.TrimSpace(cleaned[len(cleaned)-1]) == "" {
-			cleaned = cleaned[:len(cleaned)-1]
-		}
-		existingContent = strings.Join(cleaned, "\n") + "\n"
-		os.WriteFile(rcPath, []byte(existingContent), 0644)
+	existing, err := os.ReadFile(rcPath)
+	if err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Error: could not read %s: %v\n", rcPath, err)
+		os.Exit(1)
+	}
+	existingContent, err := removeInstalledWidget(string(existing))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: could not safely upgrade widget in %s: %v\n", rcPath, err)
+		os.Exit(1)
 	}
 
 	// Build widget with shell-safe path
@@ -242,6 +225,7 @@ func installWidget() {
 	switch shell {
 	case "bash":
 		widget = fmt.Sprintf(`
+%s
 # cpt - terminal copilot (Ctrl+K)
 cpt-readline() {
     local cmd status
@@ -257,9 +241,11 @@ cpt-readline() {
     fi
 }
 bind -x '"\C-k": cpt-readline'
-`, shellBin)
+%s
+`, widgetStartMarker, shellBin, widgetEndMarker)
 	case "fish":
 		widget = fmt.Sprintf(`
+%s
 # cpt - terminal copilot (Ctrl+K)
 function cpt-widget
     set -l cmd (%s 2>/dev/tty)
@@ -273,10 +259,11 @@ function cpt-widget
     commandline -f repaint
 end
 bind \ck cpt-widget
-`, shellBin)
-		os.MkdirAll(filepath.Dir(rcPath), 0755)
+%s
+`, widgetStartMarker, shellBin, widgetEndMarker)
 	case "powershell":
 		widget = fmt.Sprintf(`
+%s
 # cpt - terminal copilot (Ctrl+K)
 if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
     function Invoke-Cpt {
@@ -295,10 +282,11 @@ if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
     }
     Set-PSReadLineKeyHandler -Chord 'Ctrl+k' -ScriptBlock { Invoke-Cpt }
 }
-`, shellBin)
-		os.MkdirAll(filepath.Dir(rcPath), 0755)
+%s
+`, widgetStartMarker, shellBin, widgetEndMarker)
 	default:
 		widget = fmt.Sprintf(`
+%s
 # cpt - terminal copilot (Ctrl+K)
 cpt-widget() {
     local cmd cpt_status
@@ -317,17 +305,21 @@ cpt-widget() {
 }
 zle -N cpt-widget
 bindkey '^K' cpt-widget
-`, shellBin)
+%s
+`, widgetStartMarker, shellBin, widgetEndMarker)
 	}
 
-	f, err := os.OpenFile(rcPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: could not write to %s: %v\n", rcPath, err)
+	if err := os.MkdirAll(filepath.Dir(rcPath), 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: could not create %s: %v\n", filepath.Dir(rcPath), err)
 		os.Exit(1)
 	}
-	defer f.Close()
 
-	if _, err := f.WriteString(widget); err != nil {
+	finalContent := strings.TrimRight(existingContent, "\n")
+	if finalContent != "" {
+		finalContent += "\n"
+	}
+	finalContent += strings.TrimLeft(widget, "\n")
+	if err := atomicWriteFile(rcPath, []byte(finalContent), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing to %s: %v\n", rcPath, err)
 		os.Exit(1)
 	}
@@ -339,6 +331,125 @@ bindkey '^K' cpt-widget
 	} else {
 		fmt.Fprintf(os.Stderr, "  Restart your shell or run: source %s\n", rcPath)
 	}
+}
+
+func atomicWriteFile(path string, data []byte, defaultMode os.FileMode) error {
+	target := path
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return err
+		}
+		target = resolved
+	}
+
+	mode := defaultMode
+	if info, err := os.Stat(target); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".cpt-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, target)
+}
+
+func removeInstalledWidget(content string) (string, error) {
+	lines := strings.Split(content, "\n")
+	cleaned := make([]string, 0, len(lines))
+	inWidget := false
+	explicitBlock := false
+	powerShellEndPending := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inWidget {
+			switch {
+			case trimmed == widgetStartMarker:
+				inWidget = true
+				explicitBlock = true
+				continue
+			case strings.Contains(trimmed, "# cpt - terminal copilot"):
+				inWidget = true
+				continue
+			}
+			cleaned = append(cleaned, line)
+			continue
+		}
+
+		if explicitBlock {
+			if trimmed == widgetEndMarker {
+				inWidget = false
+				explicitBlock = false
+			}
+			continue
+		}
+
+		if powerShellEndPending {
+			if trimmed == "}" {
+				inWidget = false
+				powerShellEndPending = false
+			}
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(trimmed, "Set-PSReadLineKeyHandler"):
+			powerShellEndPending = true
+		case strings.Contains(trimmed, "bindkey") && strings.Contains(trimmed, "cpt-widget"):
+			inWidget = false
+		case strings.Contains(trimmed, `bind -x`) && strings.Contains(trimmed, "cpt-readline"):
+			inWidget = false
+		case strings.Contains(trimmed, `bind \ck cpt-widget`):
+			inWidget = false
+		}
+	}
+
+	if inWidget {
+		return content, fmt.Errorf("found a cpt widget start marker without a complete end")
+	}
+
+	return strings.TrimRight(strings.Join(cleaned, "\n"), "\n"), nil
+}
+
+func printHelp() {
+	fmt.Println(`cpt — GitHub Copilot for your terminal
+
+Usage:
+  cpt                     Open the interactive prompt
+  cpt <request>           Generate a command immediately
+  cpt --install           Install the Ctrl+K shell widget
+  cpt --setup             Print manual shell setup
+  cpt --version           Print the version
+
+Inside cpt:
+  enter       Accept the selected command
+  ctrl+r      Run the selected command
+  ctrl+y      Copy the selected command
+  ctrl+e      Edit the request
+  tab / ↑↓    Select models or command alternatives
+  esc         Cancel`)
 }
 
 func printSetup() {

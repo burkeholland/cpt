@@ -48,6 +48,9 @@ var (
 			Foreground(coral).
 			Bold(true)
 
+	warningStyle = renderer.NewStyle().
+			Foreground(coral)
+
 	errorHintStyle = renderer.NewStyle().
 			Foreground(subtle)
 )

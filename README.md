@@ -20,10 +20,6 @@ irm https://raw.githubusercontent.com/burkeholland/cpt/main/install.ps1 | iex
 
 The installer downloads the binary, adds it to your PATH, and registers the **Ctrl+K** keybinding in your shell. Restart your terminal to activate.
 
-### Latest release
-
-**v0.4.2** fixes Windows PowerShell startup with the latest Copilot runtime response format.
-
 ### Alternative: install with Go
 
 ```sh
@@ -35,10 +31,21 @@ cpt --install
 
 1. Press **Ctrl+K** anywhere in your terminal
 2. Type what you want (e.g. "kill process on port 3000")
-3. Press **Enter** to accept the command, or type to refine
-4. Press **Esc** to cancel
+3. Review the generated command and use **↑/↓** or **Tab** to choose an alternative
+4. Press **Enter** to place it on your command line, or type a follow-up to refine it
 
-Use **Tab** / **Shift+Tab** to switch between Copilot models. Your model choice is remembered across sessions.
+While entering a request, use **Tab** / **Shift+Tab** to switch between Copilot models. Your model choice and the available model list are cached across sessions, so the picker is ready immediately.
+
+New installations default to **GPT-5.6 Luna** with reasoning disabled for fast command generation. Choosing another model preserves that model's normal reasoning behavior and remembers the selection.
+
+| Key | Action |
+|---|---|
+| `Enter` | Accept the selected command |
+| `Ctrl+R` | Run immediately; destructive commands require confirmation |
+| `Ctrl+Y` | Copy to the clipboard |
+| `Ctrl+E` | Edit the request |
+| `↑` / `↓`, `Tab` / `Shift+Tab` | Select command alternatives |
+| `Esc` | Cancel |
 
 You can also run `cpt` directly:
 
@@ -53,7 +60,7 @@ cpt "find all node_modules and delete them"
 
 ## How it works
 
-cpt uses the [Copilot SDK](https://github.com/github/copilot-sdk) to stream responses from Copilot. It renders a TUI overlay on the terminal's alternate screen — the UI appears on Ctrl+K and vanishes completely when you're done.
+cpt uses the [Copilot SDK](https://github.com/github/copilot-sdk) to stream responses from Copilot. It renders inline below the current prompt, adapts to the terminal width, and removes the interface when you're done.
 
 The selected command is printed to stdout, which the shell widget captures and places on your command line ready to execute.
 
