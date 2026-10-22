@@ -86,7 +86,6 @@ type model struct {
 	shell          string
 	bare           bool
 	width          int
-	height         int
 }
 
 func newModel(inlinePrompt string, bare bool) model {
@@ -452,7 +451,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		m.height = msg.Height
 		// On Windows, WindowSizeMsg may report buffer width instead of
 		// visible window width. Use the actual console window width.
 		if w := consoleWindowWidth(); w > 0 && w < m.width {

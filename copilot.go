@@ -36,7 +36,6 @@ func rejectPermissionRequest(copilot.PermissionRequest, copilot.PermissionInvoca
 
 type copilotClient struct {
 	client  *copilot.Client
-	models  []string
 	mu      sync.Mutex
 	started bool
 
@@ -154,7 +153,6 @@ func (c *copilotClient) listModels(ctx context.Context) ([]string, error) {
 	for _, m := range models {
 		names = append(names, m.ID)
 	}
-	c.models = names
 	return names, nil
 }
 

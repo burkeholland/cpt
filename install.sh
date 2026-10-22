@@ -38,9 +38,6 @@ get_latest_version() {
 
 download() {
   EXT="tar.gz"
-  if [ "$OS" = "windows" ]; then
-    EXT="zip"
-  fi
 
   URL="https://github.com/${REPO}/releases/download/v${VERSION}/cpt_${OS}_${ARCH}.${EXT}"
   echo "Downloading cpt v${VERSION} for ${OS}/${ARCH}..."
@@ -50,11 +47,7 @@ download() {
 
   curl -fsSL "$URL" -o "${TMP}/cpt.${EXT}"
 
-  if [ "$EXT" = "zip" ]; then
-    unzip -qo "${TMP}/cpt.${EXT}" -d "${TMP}"
-  else
-    tar -xzf "${TMP}/cpt.${EXT}" -C "${TMP}"
-  fi
+  tar -xzf "${TMP}/cpt.${EXT}" -C "${TMP}"
 
   mkdir -p "$INSTALL_DIR"
   cp "${TMP}/cpt" "${INSTALL_DIR}/cpt"
